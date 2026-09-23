@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#123b5d" />
+    <title>青年驿站全市房源日历</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <section class="hero">
+        <div class="eyebrow">SHANGHAI YOUTH INN · CITYWIDE</div>
+        <div class="hero-row">
+          <div>
+            <h1>未来房源日历</h1>
+            <p>从今天开始，查看全市青年驿站未来几天的可用房源数量。</p>
+          </div>
+          <div class="hero-mark" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="toolbar" aria-label="日历设置">
+        <div class="toolbar-copy">
+          <span class="toolbar-label">查询范围</span>
+          <strong>今天至官网未来第 20 天</strong>
+        </div>
+        <div class="toolbar-copy">
+          <span class="toolbar-label">房源类型</span>
+          <select id="house-type" aria-label="房源类型">
+            <option value="0" selected>可供个人申请房源</option>
+            <option value="1">全部房源</option>
+          </select>
+        </div>
+        <div class="toolbar-actions">
+          <label class="check-label">
+            <input id="only-on-shelf" type="checkbox" checked />
+            <span>只统计上架驿站</span>
+          </label>
+          <button type="button" id="refresh-button">刷新数据</button>
+        </div>
+      </section>
+
+      <section class="summary-row" aria-live="polite">
+        <div>
+          <div id="status" class="status">正在读取全市房源日历…</div>
+          <div class="summary-note">数量为全市各驿站当天可用房源合计；今天和明天标记为“暂未开放”，点击日期查看明细。</div>
+        </div>
+        <div id="range-label" class="range-label"></div>
+      </section>
+
+      <section id="calendar" class="calendar-grid" aria-label="未来房源日历"></section>
+
+      <section class="details-section">
+        <div class="details-heading">
+          <div>
+            <span class="section-kicker">SELECTED DATE</span>
+            <h2 id="details-title">选择一个日期查看驿站</h2>
+          </div>
+          <div id="details-count" class="details-count"></div>
+        </div>
+        <section id="details" class="details-grid" aria-live="polite"></section>
+      </section>
+
+      <footer>
+        数据来自上海青年驿站公开接口。房源数量会随官方数据变化，最终以申请页面和驿站审核为准。
+      </footer>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

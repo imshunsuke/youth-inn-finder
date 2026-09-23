@@ -1,0 +1,16 @@
+{
+  "name": "youth-inn-finder",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Node.js web app + REST API for Shanghai Youth Inn (青年驿站) room availability with a 21-day calendar",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}
