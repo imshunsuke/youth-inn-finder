@@ -1,3 +1,5 @@
+import { findCalendar } from "./src/service.mjs";
+
 const calendarElement = document.querySelector("#calendar");
 const detailsElement = document.querySelector("#details");
 const statusElement = document.querySelector("#status");
@@ -189,21 +191,52 @@ function selectDate(date) {
   renderDetails(day);
 }
 
-async function loadCalendar() {
+// 对上游友好：同参数短缓存 + 强制刷新限频。findCalendar 一次会请求 1 个列表 + N 个驿站日历。
+const CACHE_TTL_MS = 60_000;
+const FORCE_REFRESH_MIN_INTERVAL_MS = 15_000;
+const calendarCache = new Map(); // cacheKey -> { timestamp, payload }
+let lastForceRefreshAt = 0;
+
+function cacheKeyFor(query) {
+  return `${query.startDate}|${query.days}|${query.onlyOnShelf}|${query.houseType}`;
+}
+
+async function fetchCalendarWithCache(query, { force = false } = {}) {
+  const key = cacheKeyFor(query);
+  const cached = calendarCache.get(key);
+  const now = Date.now();
+  if (!force && cached && now - cached.timestamp < CACHE_TTL_MS) {
+    return cached.payload;
+  }
+  if (force && now - lastForceRefreshAt < FORCE_REFRESH_MIN_INTERVAL_MS) {
+    if (cached) return cached.payload;
+  }
+  if (force) lastForceRefreshAt = now;
+  const payload = await findCalendar({
+    startDate: query.startDate,
+    days: query.days,
+    onlyOnShelf: query.onlyOnShelf,
+    houseType: query.houseType,
+  });
+  calendarCache.set(key, { timestamp: Date.now(), payload });
+  return payload;
+}
+
+async function loadCalendar(options = {}) {
   refreshButton.disabled = true;
   refreshButton.textContent = "读取中…";
   setStatus("正在读取全市未来房源…");
   calendarElement.classList.add("loading");
-  const query = new URLSearchParams({
-    startDate: localIsoDate(),
-    days: String(FIXED_CALENDAR_DAYS),
-    onlyOnShelf: shelfCheckbox.checked ? "true" : "false",
-    houseType: houseTypeSelect.value,
-  });
   try {
-    const response = await fetch(`/api/calendar?${query.toString()}`);
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || "日历查询失败");
+    const payload = await fetchCalendarWithCache(
+      {
+        startDate: localIsoDate(),
+        days: FIXED_CALENDAR_DAYS,
+        onlyOnShelf: shelfCheckbox.checked,
+        houseType: houseTypeSelect.value,
+      },
+      { force: options.force === true },
+    );
     calendarDays = payload.days;
     stationCalendars = payload.stations || [];
     selectedDate = calendarDays.some((day) => day.date === selectedDate)
@@ -225,7 +258,14 @@ async function loadCalendar() {
   }
 }
 
-shelfCheckbox.addEventListener("change", loadCalendar);
-houseTypeSelect.addEventListener("change", loadCalendar);
-refreshButton.addEventListener("click", loadCalendar);
+// 输入防抖：连续切换筛选条件时合并请求，保护上游接口。
+let filterDebounceTimer = null;
+function debouncedLoadCalendar() {
+  clearTimeout(filterDebounceTimer);
+  filterDebounceTimer = setTimeout(() => loadCalendar(), 400);
+}
+
+shelfCheckbox.addEventListener("change", debouncedLoadCalendar);
+houseTypeSelect.addEventListener("change", debouncedLoadCalendar);
+refreshButton.addEventListener("click", () => loadCalendar({ force: true }));
 loadCalendar();

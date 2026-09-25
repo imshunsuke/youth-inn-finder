@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { findAvailable, findCalendar, findNearest } from "./src/service.mjs";
+import { findAvailable, findCalendar, findNearest } from "./public/src/service.mjs";
 
 const projectRoot = fileURLToPath(new URL(".", import.meta.url));
 const publicRoot = join(projectRoot, "public");
@@ -14,6 +14,7 @@ const contentTypes = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml",
 };

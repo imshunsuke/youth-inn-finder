@@ -8,9 +8,9 @@ import {
   sortAvailable,
   sortNearest,
   validateStayDates,
-} from "../src/domain.mjs";
-import { normalizeListing } from "../src/api.mjs";
-import { findAvailable, findCalendar } from "../src/service.mjs";
+} from "../public/src/domain.mjs";
+import { normalizeListing } from "../public/src/api.mjs";
+import { findAvailable, findCalendar } from "../public/src/service.mjs";
 
 function plusDays(offset) {
   const now = new Date();

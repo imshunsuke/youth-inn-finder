@@ -47,16 +47,22 @@ export class UpstreamError extends Error {
 }
 
 function apiBaseUrl() {
-  return (process.env.YOUTH_INN_API_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
+  // Node 环境可用环境变量覆盖接口地址；浏览器静态托管时无 process，退回默认值。
+  const envBaseUrl =
+    typeof process !== "undefined" && process.env ? process.env.YOUTH_INN_API_BASE_URL : undefined;
+  return (envBaseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
 }
 
 async function requestJson(url, options = {}) {
   const timeoutMs = options.timeoutMs || DEFAULT_TIMEOUT_MS;
   const headers = {
     Accept: "application/json",
-    "User-Agent": USER_AGENT,
     ...(options.headers || {}),
   };
+  // User-Agent 是浏览器禁止设置的请求头，仅在 Node 侧发送。
+  if (typeof process !== "undefined" && process.versions?.node) {
+    headers["User-Agent"] = USER_AGENT;
+  }
   let response;
   try {
     response = await fetch(url, {
