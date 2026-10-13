@@ -8,6 +8,7 @@ function evidence() {
     samples.push({kind:"query",date,elapsedMs,fresh,stale,total:90,unknown:fresh===90?0:90-fresh,http:200,durationMs:100,deployment,issues:[]});
   }
   for(const elapsedMs of [1200_000,1800_000]) samples.push({kind:"calendar",elapsedMs,latestSample:String(elapsedMs),http:200,durationMs:100,deployment});
+  for(let elapsedMs=0;elapsedMs<=4200_000;elapsedMs+=60_000) samples.push({kind:"health",elapsedMs,http:200,durationMs:100,deployment});
   const traces=Array.from({length:20},()=>({deployment,outcome:"ok",cpuMs:8}));
   const options={durationMs:4200_000,expectedDurationMs:4200_000,idleStartMs:600_000,idleEndMs:2100_000,expectedDeployment:deployment};
   return {samples,traces,options};
@@ -46,4 +47,12 @@ test("runtime evidence strips credentials, emails, URL parameters, headers and l
     logs:[{message:["private-log"]}],exceptions:[{message:"private-exception"}]};
   const output=JSON.stringify(safeTrace(raw));
   assert.doesNotMatch(output,/private|Authorization|email|token/); assert.equal(safeTrace(raw).path,"/api/available");
+});
+test("wall-clock duration cannot hide a sleeping machine or a missing part of the observation window",()=>{
+  const {samples,traces,options}=evidence();
+  const gap=samples.filter(s=>s.kind!=="health" || s.elapsedMs<1200_000 || s.elapsedMs>1800_000);
+  const report=summarize(gap,traces,options);
+  assert.equal(report.functional,"FAIL"); assert.ok(report.gates.includes("CONTINUOUS_SAMPLING_GAP"));
+  const earlyStop=summarize(samples.filter(s=>s.elapsedMs<3600_000),traces,options);
+  assert.ok(earlyStop.gates.includes("CONTINUOUS_SAMPLING_GAP"));
 });
