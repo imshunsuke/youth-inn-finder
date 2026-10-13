@@ -25,7 +25,7 @@ function catalogItems(row) {
 /** Durable, bounded collector. Each run counts actual fetch() calls (including both
  * catalog types), never exceeds 30, and makes at most 3 at once. A D1 lease and fenced
  * writes protect overlapping Cron invocations/restarts; there are no process locks.
- * Use the configured two-minute Cron to fill 90 stations in several slices. Reminder evaluation
+ * Use the configured Cron to fill 90 stations in several slices. Reminder evaluation
  * can still use its independently persisted 15-minute due time.
  */
 export function createCollector({ db, clock = () => new Date(), fetchImpl = (...args) => globalThis.fetch(...args),

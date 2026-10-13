@@ -6,6 +6,7 @@ import { createSnapshotStore } from "../src/infrastructure/snapshot-store.mjs";
 import { collectInteractiveIntervals } from "../src/application/interactive-collector.mjs";
 import { createCollector } from "../src/application/collector.mjs";
 import { handleQueryRequest } from "../src/http/query-routes.mjs";
+import { COLLECTION_POLICY } from "../src/application/collection-policy.mjs";
 
 const initial = Date.parse("2026-10-14T00:00:00Z");
 async function fixture(t) {
@@ -164,11 +165,11 @@ test("ninety simulated minutes: three city ranges share a queue, survive faults 
       : [{ applyDate: "2026-10-20", applyNumber: 1 }] }));
   };
   for (const type of ["0", "1"]) await store.saveCatalog(type, { items, fetchedAt: clock().toISOString() });
-  const collector = () => createCollector({ db, clock, fetchImpl, budget: 20, maxCatalogRefreshes: 1 });
+  const collector = () => createCollector({ db, clock, fetchImpl, ...COLLECTION_POLICY });
   const app = () => createApp({ env: { DB: db, APP_SECRET: "unit-test-secret-with-at-least-32-bytes" }, clock, interactiveCollection: true,
     collectIntervals: (options) => collectInteractiveIntervals({ ...options, fetchImpl }) });
   for (let second = 0; second <= 90 * 60; second += 10) {
-    if (second % 120 === 0) await collector().run();
+    if (second % 60 === 0) await collector().run();
     const hidden = second >= 10 * 60 && second < 35 * 60;
     if (!hidden) {
       for (const date of ranges) {
