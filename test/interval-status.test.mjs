@@ -25,4 +25,6 @@ test("automatic retry honors Retry-After seconds and dates, and stops on permane
   for (const status of [400, 401, 403, 404, 422]) assert.equal(intervalRetry({ status }, now).retryable, false);
   for (const status of [0, 408, 429, 500, 503]) assert.equal(intervalRetry({ status }, now).retryable, true);
   assert.equal(intervalRetry({ refreshAfterMs: 90_000, retryAfter: "invalid" }, now).retryAt, now + 90_000);
+  assert.equal(intervalRetry({ refreshAfterMs: 10_000, retryAfter: "10" }, now).retryAt, now + 10_000);
+  assert.equal(intervalRetry({ status: 429, refreshAfterMs: 10_000, retryAfter: "600" }, now).retryAt, now + 600_000);
 });

@@ -61,7 +61,7 @@ test("public interval admission is persisted, bounded and does not store raw IP 
     queryHandler: async () => new Response("ok") });
   const path = "/api/available?date=2026-10-15&endDate=2026-10-17";
   const headers = { "CF-Connecting-IP": "192.0.2.7" };
-  for (let count = 0; count < 60; count++) assert.equal((await app(request(path, { headers }))).status, 200);
+  for (let count = 0; count < 90; count++) assert.equal((await app(request(path, { headers }))).status, 200);
   const limited = await app(request(path, { headers }));
   assert.equal(limited.status, 429); assert.equal(limited.headers.get("Retry-After"), "600");
   const rows = await db.prepare("SELECT bucket_key FROM http_rate_limits").all();

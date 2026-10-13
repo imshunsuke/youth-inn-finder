@@ -4,6 +4,7 @@ import { createQueryService } from "./application/query-service.mjs";
 import { createSnapshotClient } from "./infrastructure/snapshot-store.mjs";
 import { runMonitor } from "./application/monitor.mjs";
 import { createReminderStore } from "./infrastructure/reminder-store.mjs";
+import { collectInteractiveIntervals } from "./application/interactive-collector.mjs";
 
 export async function runScheduled(env, { clock = () => new Date(), fetchImpl = (...args) => globalThis.fetch(...args), phase = "all" } = {}) {
   if (!env.DB) return { disabled: true, reason: "storage-unavailable" };
@@ -31,7 +32,13 @@ export async function runScheduled(env, { clock = () => new Date(), fetchImpl = 
 }
 
 export default {
-  async fetch(request, env) { return createApp({ env })(request); },
+  async fetch(request, env, context) {
+    const onIntervalPending = context?.waitUntil ? () => context.waitUntil(
+      collectInteractiveIntervals({ db: env.DB }).catch(() => {
+        console.error(JSON.stringify({ event: "interactive_collection_failed", code: "COLLECTION_ERROR" }));
+      })) : undefined;
+    return createApp({ env, onIntervalPending })(request);
+  },
   async scheduled(controller, env) {
     const phase = controller.cron === "*/2 * * * *" ? "collection" : controller.cron === "0 19 * * *" ? "cleanup" : "monitor";
     return runScheduled(env, { phase });

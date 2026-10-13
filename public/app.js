@@ -143,7 +143,7 @@ async function loadInterval({ force = false } = {}) {
   clearTimeout(intervalTimer); intervalTimer = null; intervalController?.abort(); const sequence = ++intervalSequence;
   if (!state.endDate) { state.interval = null; render(); return; }
   const key = intervalKey(), cached = intervalCache.get(key);
-  if (!force && cached && Date.now() - cached.at < 60_000) { state.interval = { key, payload: cached.payload, pending: cached.pending }; render(); return; }
+  if (!force && cached && Date.now() - cached.at < (cached.pending ? 10_000 : 60_000)) { state.interval = { key, payload: cached.payload, pending: cached.pending }; render(); return; }
   intervalController = new AbortController(); state.interval = { key, payload: cached?.payload || null, loading: true, pending: false, error: "" }; render();
   lastIntervalAttemptAt = Date.now(); lastIntervalAttemptKey = key;
   try {
@@ -154,7 +154,7 @@ async function loadInterval({ force = false } = {}) {
     state.interval = { key, payload: result.payload, pending, ...intervalRetry({ status: result.status, retryAfter: result.retryAfter, refreshAfterMs: result.payload.meta?.refreshAfterMs }) };
     intervalCache.set(key, { at: Date.now(), payload: result.payload, pending });
   } catch (error) { if (error.name === "AbortError" || sequence !== intervalSequence) return; state.interval = { key, payload: cached?.payload || null, error: error.message, ...intervalRetry(error) }; }
-  finally { if (sequence === intervalSequence) { if (state.interval) state.interval.loading = false; render(); } }
+  finally { if (sequence === intervalSequence) { if (state.interval) state.interval.loading = false; render(); scheduleAutoUpdate(); } }
 }
 function findStation(id) { return allStations().find((station) => station.id === id) || displaySource().items.find((station) => station.id === id) || state.favorites.get(id); }
 function openStation(id) {
@@ -230,12 +230,12 @@ function autoUpdate() {
   if (state.endDate && !intervalTimer) {
     const key = intervalKey(), current = state.interval?.key === key ? state.interval : null;
     const sinceAttempt = key === lastIntervalAttemptKey ? Date.now() - lastIntervalAttemptAt : Infinity;
-    if (!current?.loading && current?.retryable !== false && Date.now() >= (current?.retryAt || 0) && sinceAttempt >= 60_000 && needsSnapshotUpdate(current?.payload, current?.error, current?.pending)) loadInterval({ force: true });
+    if (!current?.loading && current?.retryable !== false && Date.now() >= (current?.retryAt || 0) && sinceAttempt >= 10_000 && needsSnapshotUpdate(current?.payload, current?.error, current?.pending)) loadInterval({ force: true });
   }
 }
 function scheduleAutoUpdate() {
   clearTimeout(autoUpdateTimer);
-  if (!document.hidden) autoUpdateTimer = setTimeout(() => { autoUpdateTimer = null; autoUpdate(); scheduleAutoUpdate(); }, 60_000);
+  if (!document.hidden) autoUpdateTimer = setTimeout(() => { autoUpdateTimer = null; autoUpdate(); scheduleAutoUpdate(); }, state.endDate ? 10_000 : 60_000);
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) autoUpdate(); scheduleAutoUpdate(); });
 window.addEventListener("pagehide", () => clearTimeout(autoUpdateTimer));

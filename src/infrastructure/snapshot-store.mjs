@@ -189,6 +189,24 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
     return Boolean(await prepare(`SELECT 1 AS owned WHERE ${leaseGuard}`, fencedValues(lease)).first());
   }
 
+  // The same fenced lease as Cron keeps total upstream concurrency bounded across
+  // all visitors. Reserve quota atomically before fetching; failures also count.
+  async function acquireInteractiveLease({ budget = 9, cooldownMs = 10_000, dailyLimit = 6000, leaseMs = 60_000 } = {}) {
+    const at = now(), day = Math.floor(at / 86_400_000), token = globalThis.crypto.randomUUID();
+    const row = await prepare(`INSERT INTO query_collector_state
+      (name,lease_token,lease_until,updated_at,interactive_started_at,interactive_day,interactive_requests)
+      VALUES ('official',?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET
+      lease_token=excluded.lease_token,lease_until=excluded.lease_until,updated_at=excluded.updated_at,
+      interactive_started_at=excluded.interactive_started_at,interactive_day=excluded.interactive_day,
+      interactive_requests=CASE WHEN query_collector_state.interactive_day=?
+        THEN query_collector_state.interactive_requests+? ELSE ? END
+      WHERE query_collector_state.lease_until<=?
+        AND query_collector_state.interactive_started_at<=?
+        AND (query_collector_state.interactive_day<>? OR query_collector_state.interactive_requests+?<=?)
+      RETURNING lease_until`, [token,at+leaseMs,at,at,day,budget,day,budget,budget,at,at-cooldownMs,day,budget,dailyLimit]).first();
+    return row ? { token, expiresAt: row.lease_until } : null;
+  }
+
   async function advanceCursor(lease, { calendarCursor, catalogCursor, reminderCursor } = {}) {
     return changes(await prepare(`UPDATE query_collector_state SET calendar_cursor=COALESCE(?, calendar_cursor),
       catalog_cursor=COALESCE(?, catalog_cursor), reminder_cursor=COALESCE(?, reminder_cursor), updated_at=?
@@ -343,7 +361,7 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
 
   return Object.freeze({ readCatalog, readCatalogRows, readCalendarRows, readCollectorCatalogRows,
     readCollectorCalendarRows, readCalendars, readIntervals,
-    saveCatalog, recordCatalogFailure, saveCalendarBatch, saveIntervalBatch, acquireLease, hasLease,
+    saveCatalog, recordCatalogFailure, saveCalendarBatch, saveIntervalBatch, acquireLease, acquireInteractiveLease, hasLease,
     advanceCursor, releaseLease, dueIntervalJobs, enqueueIntervalQuery, enqueueIntervalJobs, reconcileIntervalPriorities, pruneExpiredJobs });
 }
 

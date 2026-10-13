@@ -7,6 +7,7 @@ import { createLocalDatabase } from './src/development/d1.mjs';
 import { migrateLocalDatabase } from './src/development/migrate.mjs';
 import { createApp } from './src/http/app.mjs';
 import { runScheduled } from './src/worker.mjs';
+import { collectInteractiveIntervals } from './src/application/interactive-collector.mjs';
 
 const projectRoot = fileURLToPath(new URL('.', import.meta.url));
 const publicRoot = resolve(projectRoot, 'public');
@@ -45,7 +46,12 @@ async function assets(request) {
       { headers: { 'Content-Type': type, 'Cache-Control': 'no-cache' } });
   } catch { return new Response('Not found', { status: 404 }); }
 }
-const app = createApp({ env, assetHandler: assets });
+const interactiveTasks = new Set();
+const app = createApp({ env, assetHandler: assets, onIntervalPending: () => {
+  const task = collectInteractiveIntervals({ db }).catch(() => console.error('即时房源更新暂时失败，将自动重试。'))
+    .finally(() => interactiveTasks.delete(task));
+  interactiveTasks.add(task);
+} });
 let localOrigin;
 const server = createServer(async (incoming, outgoing) => {
   try {
@@ -99,6 +105,7 @@ async function stop() {
   stopping = true; clearInterval(interval);
   server.close();
   await running;
+  await Promise.allSettled([...interactiveTasks]);
   db.close();
 }
 process.on('SIGINT', stop);

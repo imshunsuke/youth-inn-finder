@@ -2,6 +2,7 @@ import { AppError, invalidInput } from "../domain/errors.mjs";
 import { nowIso, todayInShanghai } from "../domain/dates.mjs";
 import { createQueryService } from "../application/query-service.mjs";
 import { createSnapshotClient, createSnapshotStore, DEFAULT_SNAPSHOT_FRESHNESS } from "../infrastructure/snapshot-store.mjs";
+import { INTERACTIVE_REFRESH_MS } from "../application/interactive-collector.mjs";
 
 const ROUTES = new Set(["/api/calendar", "/api/available", "/api/nearest"]);
 const PARAMETERS = new Set(["startDate", "date", "endDate", "days", "lat", "lon", "houseType", "onlyOnShelf",
@@ -55,12 +56,13 @@ function addSnapshotMetadata(result, diagnostics) {
 
 /** Standalone Web Request/Response handler. Returns null outside query routes.
  * Frontend reads D1 snapshots only: this function never calls official fetch().
- * A missing/stale interval may enqueue bounded durable work, never 90 POSTs inline.
+ * A missing/stale interval may enqueue bounded durable work and signal a separate
+ * small background slice. Never wait for 90 POSTs inside a response.
  * CORS, CSP, auth-independent global rate limits and security headers belong to the
  * root router. Rate-limit interval admission there before enabling public traffic.
  */
 export async function handleQueryRequest(request, { db, clock = () => new Date(), minLeadDays = 2,
-  freshness = DEFAULT_SNAPSHOT_FRESHNESS, maxIntervalJobs = 2000, intervalQueueTtlMs = 30 * 60_000 } = {}) {
+  freshness = DEFAULT_SNAPSHOT_FRESHNESS, maxIntervalJobs = 2000, intervalQueueTtlMs = 30 * 60_000, onIntervalPending } = {}) {
   let url;
   try { url = new URL(request.url); } catch { return jsonResponse({ error: "请求地址无效", code: "INVALID_INPUT" }, 400); }
   if (!ROUTES.has(url.pathname)) return null;
@@ -83,8 +85,12 @@ export async function handleQueryRequest(request, { db, clock = () => new Date()
         observations: diagnostics.observations,
       });
       result.meta.collection = { status: queued.capacityLimited ? "capacity-limited" : queued.accepted > 0 ? "queued" : "ready", ...queued };
+      if (queued.accepted > 0 && onIntervalPending) {
+        onIntervalPending();
+        result.meta.refreshAfterMs = INTERACTIVE_REFRESH_MS;
+      }
     }
-    return jsonResponse(result, 200, result.meta.pending ? { "Retry-After": "60" } : {});
+    return jsonResponse(result, 200, result.meta.pending ? { "Retry-After": String(result.meta.refreshAfterMs / 1000) } : {});
   } catch (error) {
     const known = error instanceof AppError;
     const status = known ? error.status : 500;
