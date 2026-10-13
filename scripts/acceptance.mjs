@@ -142,18 +142,21 @@ export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acc
     metadata.deployment=expectedDeployment; await writeFile(resolve(root,"metadata.json"),JSON.stringify(metadata,null,2));
     while (!stopped && Date.now()-started < minutes*60_000) {
       const elapsed=Date.now()-started, minute=Math.floor(elapsed/60_000), idle=minute>=10 && minute<35;
-      const tickStart=Date.now();
+      const tickStart=Date.now(); let nextTick=tickStart+(idle?60_000:10_000);
       if (minute!==lastMinute) { await sample("calendar","/api/calendar?includeDayItems=false&includeOfficialDetails=false&onlyOnShelf=true"); await sample("health","/api/health"); lastMinute=minute; }
       const queryElapsed=Date.now()-started;
       if (!(queryElapsed>=600_000 && queryElapsed<2100_000)) {
         const results=await Promise.all(dates.map((date)=>sample("query",`/api/available?date=${date}&endDate=${endDate}&onlyOnShelf=true&limit=200&includeOfficialDetails=false`,{date})));
+        // Match the page: its next read is ten seconds after the previous read
+        // completes, not after an earlier wall-clock tick or after collection.
+        nextTick=Date.now()+10_000;
         if (results.some((r)=>r.payload?.meta?.collection?.advanceUrl==="/api/collection")) await sample("collection","/api/collection",{method:"POST"});
         if (results.some((r)=>!r.row.skipped && (r.row.http===429 || r.row.http===200 && r.row.deployment!==expectedDeployment || r.row.issues?.length))) {
           console.log(JSON.stringify({critical:"LIVE_GATE_FAILED",minute})); break;
         }
       }
       if (elapsed%60_000 < 12_000) console.log(JSON.stringify({ minute,phase:idle?"idle-expiry":"active",coverage:dates.map((date)=>{const s=samples.findLast((s)=>s.kind==="query"&&s.date===date);return`${s?.fresh??"?"}/${s?.total??"?"}`;}),samples:samples.length,errors:samples.filter((s)=>s.http!==200).length }));
-      await new Promise((resolve)=>setTimeout(resolve,Math.max(250, (idle?60_000:10_000)-(Date.now()-tickStart))));
+      await new Promise((resolve)=>setTimeout(resolve,Math.max(250,nextTick-Date.now())));
     }
   } finally {
     process.removeListener("SIGINT",stop); process.removeListener("SIGTERM",stop);

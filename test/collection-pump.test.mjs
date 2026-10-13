@@ -22,8 +22,14 @@ test("overlapping ticks coalesce and failures honor Retry-After before resuming"
   const first = pump.advance(pending); at = 10_000;
   assert.equal(pump.advance(pending), first); assert.equal(calls, 1);
   unblock(); await first;
-  at = 19_999; assert.equal(await pump.advance(pending), null);
-  at = 20_000; await assert.rejects(pump.advance(pending), /rate limited/);
-  at = 619_999; assert.equal(await pump.advance(pending), null);
-  at = 620_000; assert.equal((await pump.advance(pending)).status, "idle"); assert.equal(calls, 3);
+  at = 10_000; await assert.rejects(pump.advance(pending), /rate limited/);
+  at = 609_999; assert.equal(await pump.advance(pending), null);
+  at = 610_000; assert.equal((await pump.advance(pending)).status, "idle"); assert.equal(calls, 3);
+});
+test("network time does not add a second cooldown to successful collection",async()=>{
+  let at=0,calls=0;
+  const pump=createCollectionPump({clock:()=>at,requestImpl:async()=>{calls++;at+=2000;return{payload:{status:"collected"},retryAfter:"10"};}});
+  await pump.advance(pending); assert.equal(at,2000);
+  at=9999; assert.equal(await pump.advance(pending),null);
+  at=10_000; await pump.advance(pending); assert.equal(calls,2);
 });
