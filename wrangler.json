@@ -1,0 +1,36 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "youth-inn-finder",
+  "main": "src/worker.mjs",
+  "compatibility_date": "2026-10-13",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "youth-inn-finder",
+      "migrations_dir": "migrations",
+      "database_id": "3b1a08f0-d8af-46f2-9966-d6ea65924844"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "*/2 * * * *",
+      "* * * * *",
+      "0 19 * * *"
+    ]
+  },
+  "vars": {
+    "ENABLE_MONITORING": "true",
+    "MAIL_DAILY_LIMIT": "250",
+    "MAIL_NOTIFICATION_DAILY_LIMIT": "8",
+    "PUBLIC_URL": "https://youth-inn-finder.imshunsukez.workers.dev"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
