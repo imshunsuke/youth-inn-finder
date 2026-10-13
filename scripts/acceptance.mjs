@@ -43,6 +43,10 @@ export function summarize(samples, traces, { durationMs, expectedDurationMs, idl
   const queries = samples.filter((s) => s.kind === "query"), errors = samples.filter((s) => s.http !== 200 || s.error);
   const violations = samples.flatMap((s) => s.issues ?? []), gates = [];
   if (durationMs < expectedDurationMs) gates.push("DURATION_INCOMPLETE");
+  const heartbeats=samples.filter((s)=>s.kind==="health").map((s)=>s.elapsedMs).sort((a,b)=>a-b);
+  const boundaries=[0,...heartbeats,durationMs];
+  const maxHeartbeatGapMs=Math.max(...boundaries.slice(1).map((at,index)=>at-boundaries[index]));
+  if (!heartbeats.length || maxHeartbeatGapMs>120_000) gates.push("CONTINUOUS_SAMPLING_GAP");
   if (!samples.length || (samples.length-errors.length)/samples.length < CRITERIA.availability) gates.push("HTTP_AVAILABILITY");
   if (samples.some((s) => s.http === 429)) gates.push("NORMAL_TRAFFIC_RATE_LIMITED");
   if (!expectedDeployment || samples.some((s) => s.http===200 && s.deployment !== expectedDeployment)) gates.push("DEPLOYMENT_CHANGED_OR_UNIDENTIFIED");
@@ -80,7 +84,7 @@ export function summarize(samples, traces, { durationMs, expectedDurationMs, idl
     const selected=currentTraces.filter((s)=>path==="cron"?s.cron:s.path===path);
     byPath[path]={observed:selected.length,p95Ms:percentile(selected.map((s)=>s.cpuMs).filter(Number.isFinite),.95),over10ms:selected.filter((s)=>s.cpuMs>10).length};
   }
-  return { functional: gates.length ? "FAIL" : "PASS", gates: [...new Set(gates)], durationMs, sampleCount: samples.length,
+  return { functional: gates.length ? "FAIL" : "PASS", gates: [...new Set(gates)], durationMs, maxHeartbeatGapMs, sampleCount: samples.length,
     errors: errors.length, availability: samples.length ? (samples.length-errors.length)/samples.length : 0, queryP95Ms, ranges,
     cpu: { status: !currentTraces.length ? "UNOBSERVED" : cpuOverBudget ? "BUDGET_RISK" : "WITHIN_OBSERVED_BUDGET",
       observed: currentTraces.length, over10ms: cpuOverBudget, p95Ms: percentile(currentTraces.map((s)=>s.cpuMs).filter(Number.isFinite),.95),
