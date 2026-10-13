@@ -1,73 +1,70 @@
 <!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#123b5d" />
-    <title>青年驿站全市房源日历</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
-    <main class="page-shell">
-      <section class="hero">
-        <div class="eyebrow">SHANGHAI YOUTH INN · CITYWIDE</div>
-        <div class="hero-row">
-          <div>
-            <h1>未来房源日历</h1>
-            <p>从今天开始，查看全市青年驿站未来几天的可用房源数量。</p>
+<html lang="zh-CN"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><meta name="theme-color" content="#234e3e" /><meta name="description" content="查看上海青年驿站日期房源，收藏驿站并通过邮件接收有房提醒。" /><title>青年驿站 · 上海</title><link rel="stylesheet" href="/styles.css" /></head><body>
+<a class="skip-link" href="#main">跳到主要内容</a>
+    <header class="site-header shell">
+      <a class="brand" href="#find" aria-label="青年驿站，回到找驿站">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M5 15 16 5l11 10v12H5Z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/><path d="M12 27v-9h8v9M12 13h8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M25 4v6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span>
+        <span><strong>青年驿站</strong></span>
+      </a>
+      <nav class="main-nav" aria-label="主要导航">
+        <button class="nav-link active" type="button" data-tab="find" aria-current="page">找驿站</button>
+        <button class="nav-link" type="button" data-tab="favorites">我的收藏 <span id="favorite-count" class="nav-count">0</span></button>
+        <button class="nav-link" type="button" data-tab="monitors">有房提醒 <span id="monitor-count" class="nav-count hidden">0</span></button>
+      </nav>
+      <button class="button button-forest header-reminder" type="button" data-open-reminder><span data-icon="bell"></span>建立提醒</button>
+    </header>
+<main id="main"><div id="find-panel" class="tab-panel">
+        <section class="hero shell" aria-labelledby="hero-title">
+          <div class="hero-copy">
+            <div class="eyebrow"><span></span>每一次出发，都值得被好好安放</div>
+            <h1 id="hero-title">初到上海，<br />先安顿好<span class="hero-emphasis">自己。</span></h1>
+            <p class="hero-description">把找住处的时间，留给新的生活。<br />发现适合你的青年驿站，轻松规划下一段旅程。</p>
+            <div class="hero-bottom"><span class="hero-location"><span data-icon="pin"></span>上海 · 全市驿站</span><span class="hero-hairline"></span><span>查房源 · 存收藏 · 订提醒</span></div>
           </div>
-          <div class="hero-mark" aria-hidden="true">
-            <span></span><span></span><span></span><span></span><span></span>
+          <div class="hero-art" aria-hidden="true">
+            <svg viewBox="0 0 510 335" fill="none">
+              <defs><linearGradient id="hero-sky" x1="255" y1="12" x2="255" y2="313" gradientUnits="userSpaceOnUse"><stop stop-color="#f2e9d7"/><stop offset="1" stop-color="#e8e4d4"/></linearGradient><pattern id="tiny-windows" width="24" height="25" patternUnits="userSpaceOnUse"><rect x="8" y="6" width="8" height="12" rx="1" fill="#fff4d9"/></pattern></defs>
+              <path d="M71 316V141a168 168 0 0 1 336 0v175Z" fill="url(#hero-sky)"/>
+              <circle cx="348" cy="76" r="31" fill="#dfac70" opacity=".7"/>
+              <path d="M111 112h32m-16-5h32m158 35h35" stroke="#fffaf0" stroke-width="6" stroke-linecap="round"/>
+              <path d="M99 265V181h34v-32h41v116M316 266V121h31v-21h9v21h14v145M374 264V172h30v92" fill="#b1b8a4"/>
+              <path d="M117 182h42v83h-42zM329 146h28v119h-28z" fill="url(#tiny-windows)" opacity=".65"/>
+              <path d="M174 268V122l62-28 66 28v146Z" fill="#d49b78"/>
+              <path d="M185 131h104v137H185Z" fill="#e8bb90"/>
+              <path d="m170 124 66-32 70 32" stroke="#966e58" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M215 268v-45a22 22 0 0 1 44 0v45" fill="#426251"/>
+              <path d="M237 210v58M221 226h32" stroke="#e0c391" stroke-width="2"/>
+              <path d="M196 151a10 10 0 0 1 20 0v17h-20zM257 151a10 10 0 0 1 20 0v17h-20z" fill="#5b7560"/>
+              <path d="M204 140v28M267 140v28M196 154h20M257 154h20" stroke="#e5cba2" stroke-width="2"/>
+              <path d="M194 176h24M255 176h24" stroke="#b77e60" stroke-width="4" stroke-linecap="round"/>
+              <rect x="198" y="184" width="78" height="12" rx="2" fill="#f5ead2"/><path d="M219 190h36" stroke="#637b60" stroke-width="2" stroke-linecap="round"/>
+              <path d="M88 275h325" stroke="#b7b5a2" stroke-width="2" stroke-linecap="round"/>
+              <path d="M155 269V202M159 234c-39 1-45-48-21-62 19-11 31 5 34 20 19 15 8 40-13 42Z" fill="#55715b"/>
+              <path d="M155 268v-53m0 21-12-13m12 3 12-14" stroke="#344e3a" stroke-width="3" stroke-linecap="round"/>
+              <path d="M329 272v-38M329 242c-25-7-28-30-8-40 20-10 39 22 8 40Z" fill="#759172"/><path d="M329 266v-43" stroke="#4c674b" stroke-width="3"/>
+              <path d="M235 276c-12 8-9 13 5 18s16 10 5 17" stroke="#d2c6a9" stroke-width="15" stroke-linecap="round"/>
+              <ellipse cx="114" cy="281" rx="18" ry="5" fill="#c7c6af"/><ellipse cx="369" cy="281" rx="22" ry="5" fill="#c7c6af"/>
+              <path d="M111 268v-18m0 10-7-8m7 3 8-8" stroke="#8b9c74" stroke-width="3" stroke-linecap="round"/><path d="M103 267h17l-3 13h-11z" fill="#b78364"/>
+              <path d="M358 268h22l-4 13h-14z" fill="#ae7d5d"/><path d="M368 268v-27m0 14c-15-1-15-16-9-18 6-2 12 8 9 18Zm1 2c13-2 17-16 10-18-6-1-11 9-10 18Z" fill="#7e966b"/>
+              <path d="m280 54 5-5 5 5m-35 6 4-4 4 4" stroke="#8d9c82" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <div class="art-stamp"><span data-icon="leaf"></span><span>让城市的第一晚<br /><strong>多一份安心。</strong></span></div>
+            <div class="art-caption">A LITTLE PLACE. A NEW BEGINNING.</div>
           </div>
-        </div>
-      </section>
-
-      <section class="toolbar" aria-label="日历设置">
-        <div class="toolbar-copy">
-          <span class="toolbar-label">查询范围</span>
-          <strong>今天至官网未来第 20 天</strong>
-        </div>
-        <div class="toolbar-copy">
-          <span class="toolbar-label">房源类型</span>
-          <select id="house-type" aria-label="房源类型">
-            <option value="0" selected>可供个人申请房源</option>
-            <option value="1">全部房源</option>
-          </select>
-        </div>
-        <div class="toolbar-actions">
-          <label class="check-label">
-            <input id="only-on-shelf" type="checkbox" checked />
-            <span>只统计上架驿站</span>
-          </label>
-          <button type="button" id="refresh-button">刷新数据</button>
-        </div>
-      </section>
-
-      <section class="summary-row" aria-live="polite">
-        <div>
-          <div id="status" class="status">正在读取全市房源日历…</div>
-          <div class="summary-note">数量为全市各驿站当天可用房源合计；今天和明天标记为“暂未开放”，点击日期查看明细。</div>
-        </div>
-        <div id="range-label" class="range-label"></div>
-      </section>
-
-      <section id="calendar" class="calendar-grid" aria-label="未来房源日历"></section>
-
-      <section class="details-section">
-        <div class="details-heading">
-          <div>
-            <span class="section-kicker">SELECTED DATE</span>
-            <h2 id="details-title">选择一个日期查看驿站</h2>
-          </div>
-          <div id="details-count" class="details-count"></div>
-        </div>
-        <section id="details" class="details-grid" aria-live="polite"></section>
-      </section>
-
-      <footer>
-        数据来自上海青年驿站公开接口。房源数量会随官方数据变化，最终以申请页面和驿站审核为准。
-      </footer>
-    </main>
-    <script type="module" src="/app.js"></script>
-  </body>
-</html>
+        </section>
+<section class="discovery shell" aria-label="查找驿站">
+<div class="search-bar">
+<label class="search-field search-district"><span class="field-icon" data-icon="pin"></span><span class="search-field-body"><span class="field-label">区域</span><select id="district-filter" aria-label="选择区域"><option value="">上海全市</option></select></span></label>
+<button id="date-jump" class="search-field search-date" type="button"><span class="field-icon" data-icon="calendar"></span><span class="search-field-body"><span class="field-label">入住 / 离店</span><strong id="search-date-label">选择日期</strong></span><span class="field-chevron" data-icon="chevron"></span></button>
+<label class="search-field search-keyword"><span class="field-icon" data-icon="search"></span><span class="search-field-body"><span class="field-label">搜索驿站</span><input id="keyword-filter" type="search" placeholder="名称或地址" maxlength="100" /></span></label>
+<button id="search-button" class="button button-forest search-submit" type="button">查找房源</button></div>
+<div class="query-options"><details id="more-filters"><summary>更多筛选</summary><div class="advanced-options"><label>房源类型<select id="house-type"><option value="0">个人申请房源</option><option value="1">全部房源</option></select></label><label>至少可用<input id="min-count" type="number" value="1" min="1" max="10000" inputmode="numeric" /> 间</label><label>显示数量<select id="result-limit"><option value="20">20 个</option><option value="50">50 个</option><option value="200">全部（最多 200 个）</option></select></label><label class="shelf-filter"><input id="only-on-shelf" type="checkbox" checked />只看上架驿站</label></div></details><button id="locate-button" class="quiet-button" type="button"><span data-icon="pin"></span>离我最近</button><button id="clear-location" class="quiet-button hidden" type="button">清除定位</button></div>
+<section id="calendar-section" class="calendar-panel" aria-labelledby="calendar-heading"><div class="section-top calendar-top"><div><h2 id="calendar-heading">房源日历<span class="heading-note">未来 21 天</span></h2></div><span id="calendar-month" class="calendar-month"></span></div><div id="calendar" class="calendar-grid" role="group" aria-label="选择入住日期"></div><div class="calendar-foot"><div class="calendar-legend"><span><i class="legend-dot available"></i>有房</span><span><i class="legend-dot empty"></i>暂无房源</span><span><i class="legend-dot unopened"></i>待开放 / 待确认</span></div><p>日历为单日概览，离店日期为空时查单日。</p></div><div class="data-status-row"><p id="data-status" class="data-status" role="status" aria-live="polite">正在读取房源…</p><button id="refresh-button" class="quiet-button" type="button"><span data-icon="refresh"></span>刷新</button></div></section>
+<section class="results-section" aria-labelledby="results-heading"><div class="section-top results-top"><div><h2 id="results-heading">可选驿站</h2><p id="results-summary" class="results-summary" role="status" aria-live="polite"></p></div><label class="sort-control"><span data-icon="sort"></span><select id="sort-filter" aria-label="驿站排序"><option value="availability">房源优先</option><option value="name">名称排序</option><option value="distance" disabled>距离最近</option></select></label></div><div id="filter-pills" class="filter-pills" aria-label="快速筛选区域"></div><div id="results" class="station-grid" aria-busy="true"></div></section>
+</section></div>
+<section id="favorites-panel" class="tab-panel shell secondary-panel hidden" aria-labelledby="favorites-title"><div class="section-top"><div><h1 id="favorites-title">我的收藏</h1><p class="secondary-description">保存在当前设备的浏览器中。</p></div><button class="button button-outline" type="button" data-go-find>继续找驿站<span data-icon="arrow"></span></button></div><div id="favorites" class="station-grid"></div></section>
+<section id="monitors-panel" class="tab-panel shell secondary-panel hidden" aria-labelledby="monitors-title"><div class="section-top"><div><h1 id="monitors-title">有房提醒</h1><p class="secondary-description">验证邮箱后启用，每 15 分钟检查。无需注册。</p></div><button class="button button-forest" type="button" data-open-reminder><span data-icon="plus"></span>建立提醒</button></div><div id="verification-box" class="management-entry hidden"><h2>确认启用这份提醒</h2><p>点击确认后验证邮箱并启用提醒。</p><button id="confirm-verification" class="button button-forest" type="button">验证邮箱并启用</button><p id="verification-status" role="status" aria-live="polite"></p></div><div class="management-entry"><h2>管理我的提醒</h2><p>通过邮件专属链接，修改、暂停或取消提醒。</p><form id="management-form" class="management-form"><label class="sr-only" for="management-email">接收管理链接的邮箱</label><input id="management-email" type="email" placeholder="你的邮箱地址" autocomplete="email" maxlength="254" required /><button id="management-submit" class="button button-forest" type="submit">获取管理链接</button></form><p id="management-message" class="management-message" role="status" aria-live="polite"></p><button id="management-health-retry" class="quiet-button hidden" type="button">重新检查邮件服务</button></div><div id="management-drafts" class="hidden"><div class="management-heading"><h2>我的提醒</h2><button id="reload-reminders" class="quiet-button" type="button">刷新</button></div><p id="reminder-list-status" class="data-status" role="status" aria-live="polite"></p><div id="monitors" class="monitor-list"></div></div></section>
+</main><footer class="site-footer shell"><div class="footer-brand"><span data-icon="leaf"></span><span>青年驿站 · 上海</span></div><p class="production-footer">公开房源查询，申请与审核请前往官网。</p></footer>
+<dialog id="stay-dialog" class="app-dialog" aria-labelledby="stay-title"><form id="stay-form" class="dialog-content"><div class="dialog-top"><span class="dialog-symbol" data-icon="calendar"></span><button class="icon-button" type="button" data-close-dialog aria-label="关闭日期选择"><span data-icon="close"></span></button></div><h2 id="stay-title">选择入住日期</h2><div class="form-row"><label class="form-label">入住日期<input id="stay-start" type="date" required /></label><label class="form-label">离店日期（选填）<input id="stay-end" type="date" /></label></div><p class="dialog-description">不填离店日期，查询当天房源。</p><p id="stay-error" class="form-error" role="alert"></p><button class="button button-forest dialog-submit" type="submit">确定日期</button></form></dialog>
+<dialog id="reminder-dialog" class="app-dialog" aria-labelledby="reminder-title"><form id="reminder-form" class="dialog-content"><div class="dialog-top"><span class="dialog-symbol" data-icon="bell"></span><button class="icon-button" type="button" data-close-dialog aria-label="关闭提醒窗口"><span data-icon="close"></span></button></div><h2 id="reminder-title">建立有房提醒</h2><p id="reminder-description" class="dialog-description">有房时发邮件，通过邮件链接随时取消。</p><p id="reminder-invite-note" class="field-hint hidden">邀请内测 · 每人最多2条提醒</p><div id="mail-status" class="draft-notice" role="status"></div><button id="retry-mail-health" class="quiet-button hidden" type="button">重新检查服务</button><label id="reminder-email-field" class="form-label">接收提醒的邮箱<input id="reminder-email" name="email" type="email" placeholder="you@example.com" autocomplete="email" maxlength="254" required /></label><label id="reminder-invite-field" class="form-label hidden">邀请码<input id="reminder-invite-code" name="inviteCode" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="128" disabled /></label><label class="form-label">关注区域<select id="reminder-district" name="district"><option value="">上海全市</option></select></label><label class="form-label"><span id="reminder-station-label">指定驿站（选填）</span><select id="reminder-station" name="stationId" aria-describedby="continuous-reminder-hint"><option value="">该区域所有驿站</option></select><span id="continuous-reminder-hint" class="field-hint hidden">连续入住提醒请选择一个驿站</span></label><div class="form-row"><label class="form-label">计划入住<input id="reminder-start" name="date" type="date" required /></label><label class="form-label">计划离店（选填）<input id="reminder-end" name="endDate" type="date" /></label></div><label class="form-label">至少可用房源<input id="reminder-min-count" name="minCount" type="number" value="1" min="1" max="10000" inputmode="numeric" required /></label><p id="reminder-error" class="form-error" role="alert"></p><p id="reminder-message" class="dialog-description" role="status" aria-live="polite"></p><button id="reminder-submit" class="button button-forest dialog-submit" type="submit" disabled><span data-icon="mail"></span>发送验证邮件</button><p id="reminder-footer-note" class="dialog-fineprint">验证邮箱后启用，每 15 分钟检查一次。</p></form></dialog>
+<dialog id="station-dialog" class="app-dialog station-dialog" aria-labelledby="station-dialog-title"><div id="station-dialog-content" class="dialog-content"></div></dialog><div id="toast" class="toast" role="status" aria-live="polite"></div><script type="module" src="/app.js"></script></body></html>

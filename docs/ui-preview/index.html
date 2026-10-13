@@ -1,0 +1,766 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#234e3e" />
+    <meta name="description" content="青年驿站网站交互设计预览。所有驿站及房源均为虚构示例，未连接实时查询或通知服务。" />
+    <title>青年驿站 · 为你的下一站，找到落脚处｜设计预览</title>
+    <style>
+
+:root {
+  --paper: #f8f6f0;
+  --white: #fffdf8;
+  --forest: #234e3e;
+  --forest-hover: #173b2d;
+  --ink: #25362d;
+  --muted: #7c8277;
+  --line: #e4e5da;
+  --sage: #e9eddf;
+  --clay: #bc8567;
+  --serif: "Iowan Old Style", "Songti SC", "Noto Serif CJK SC", "SimSun", serif;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--ink);
+  font-synthesis: none;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--paper); min-width: 320px; }
+button, input, select { font: inherit; }
+button, a, select { -webkit-tap-highlight-color: transparent; }
+button, select { cursor: pointer; }
+button { color: inherit; }
+button:disabled { cursor: not-allowed; }
+a { color: inherit; }
+button, input, select, a { outline-offset: 4px; }
+:focus-visible { outline: 3px solid #b78364; }
+::selection { background: #dce5c9; color: var(--forest); }
+svg { display: block; }
+[data-icon] { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+[data-icon] svg { width: 20px; height: 20px; }
+.shell { width: min(1160px, calc(100% - 80px)); margin-inline: auto; }
+.hidden { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+.skip-link { position: fixed; z-index: 100; top: 10px; left: 10px; transform: translateY(-150%); padding: 12px 18px; background: var(--forest); color: white; border-radius: 8px; }
+.skip-link:focus { transform: translateY(0); }
+
+.preview-strip { min-height: 35px; display: flex; justify-content: center; align-items: center; gap: 9px; padding: 8px 20px; background: #e8eadf; color: #69705f; }
+.preview-strip p { margin: 0; font-size: 10px; line-height: 1.6; letter-spacing: .03em; }
+.preview-strip strong { color: #56634c; font-weight: 600; }
+.preview-divider { margin-inline: 7px; color: #a2a996; }
+.preview-dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: #819374; flex: 0 0 auto; }
+.site-header { min-height: 100px; display: flex; align-items: center; gap: 36px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--forest); white-space: nowrap; }
+.brand-mark { display: grid; place-items: center; width: 43px; height: 45px; background: #e7ecdd; border-radius: 13px 13px 5px 5px; }
+.brand-mark svg { width: 27px; height: 27px; }
+.brand strong { display: block; font-size: 21px; font-weight: 650; letter-spacing: .1em; line-height: 1.45; }
+.brand small { display: block; color: #7e8876; font-size: 7px; letter-spacing: .16em; margin-top: 2px; }
+.main-nav { display: flex; align-items: center; justify-content: center; gap: 30px; margin-left: auto; }
+.nav-link { position: relative; display: inline-flex; gap: 6px; align-items: center; border: 0; padding: 14px 1px; background: transparent; color: #747c70; font-size: 12px; font-weight: 500; white-space: nowrap; }
+.nav-link::after { position: absolute; left: 0; right: 0; bottom: 1px; height: 2px; background: var(--forest); border-radius: 2px; content: ""; transform: scaleX(0); transition: transform .18s; }
+.nav-link.active { color: var(--forest); font-weight: 650; }
+.nav-link.active::after { transform: scaleX(1); }
+.nav-count { min-width: 15px; padding: 2px 4px; font-size: 9px; background: #e8ecdf; border-radius: 5px; }
+.button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; border: 1px solid transparent; min-height: 42px; padding: 11px 18px; border-radius: 8px; font-size: 12px; font-weight: 550; line-height: 1.4; text-decoration: none; transition: background .15s, transform .15s, border-color .15s; }
+.button:hover { transform: translateY(-1px); }
+.button-forest { background: var(--forest); color: #faf8ef; }
+.button-forest:hover { background: var(--forest-hover); }
+.button-forest [data-icon] svg { width: 16px; height: 16px; }
+.button-light { color: var(--forest); background: #faf9ef; }
+.button-light:hover { background: #e6ecdc; }
+.button-outline { border-color: #ccd5c1; color: var(--forest); background: transparent; }
+.button-outline:hover { background: var(--sage); }
+.header-reminder { margin-left: 3px; min-height: 39px; padding: 9px 15px; }
+
+.hero { display: grid; grid-template-columns: 1.03fr 1fr; align-items: center; min-height: 347px; padding: 20px 24px 34px; }
+.hero-copy { padding-left: 4px; }
+.eyebrow { display: flex; gap: 8px; align-items: center; color: #828b75; font-size: 10px; letter-spacing: .12em; }
+.eyebrow > span { width: 14px; height: 1px; background: #9aa58b; }
+.hero h1 { margin: 22px 0 19px; font-family: var(--serif); font-size: clamp(36px, 4.6vw, 57px); font-weight: 600; line-height: 1.3; letter-spacing: .03em; }
+.hero-emphasis { position: relative; color: var(--forest); z-index: 0; }
+.hero-emphasis::after { position: absolute; height: 10px; background: #dce5c9; border-radius: 55%; content: ""; left: 0; right: 8px; bottom: 3px; transform: rotate(-3deg); z-index: -1; }
+.hero-description { margin: 0; color: #7d8477; font-size: 12px; line-height: 1.95; letter-spacing: .025em; }
+.hero-bottom { display: flex; gap: 15px; align-items: center; margin-top: 22px; color: #8a8d80; font-size: 10px; letter-spacing: .04em; }
+.hero-location { display: inline-flex; align-items: center; gap: 5px; color: #647b60; }
+.hero-location svg { width: 13px; height: 13px; }
+.hero-hairline { width: 1px; height: 12px; background: #d7ddcc; }
+.hero-art { position: relative; max-width: 470px; width: 100%; justify-self: end; padding-bottom: 17px; }
+.hero-art > svg { width: 100%; }
+.art-stamp { position: absolute; bottom: 70px; right: 5px; display: flex; gap: 10px; align-items: center; padding: 12px 17px; border: 1px solid #fffdf5; border-radius: 9px; background: #fffdf2e6; color: #82916e; box-shadow: 0 9px 25px #494f2e08; transform: rotate(-6deg); }
+.art-stamp > [data-icon] svg { width: 23px; height: 23px; }
+.art-stamp > span:last-child { font-family: var(--serif); font-size: 10px; line-height: 1.8; }
+.art-stamp strong { color: var(--forest); font-size: 13px; font-weight: 500; }
+.art-caption { position: absolute; bottom: 5px; left: 50%; transform: translateX(-50%); color: #8c937e; font-size: 7px; letter-spacing: .2em; white-space: nowrap; }
+
+.discovery { padding-top: 9px; }
+.search-bar { display: flex; align-items: center; padding: 14px 17px 14px 10px; background: var(--white); border: 1px solid var(--line); border-radius: 13px; box-shadow: 0 8px 30px #33422d04; }
+.search-field { min-width: 0; display: flex; align-items: center; gap: 11px; padding: 3px 25px; text-align: left; background: transparent; border: 0; border-right: 1px solid var(--line); flex: 1; }
+.search-district { flex: .95; }
+.search-date { flex: 1.15; }
+.search-keyword { flex: 1.35; border-right: 0; }
+.field-icon { color: #7c8e6c; }
+.field-icon svg { width: 19px; height: 19px; }
+.search-field-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; }
+.field-label { font-size: 9px; color: #909383; }
+.search-field select, .search-field input { width: 100%; padding: 0; border: 0; background: transparent; color: #46543e; font-size: 12px; font-weight: 500; min-height: 19px; }
+.search-field select { max-width: 145px; }
+.search-field input::placeholder { color: #9c9e8e; font-weight: 400; }
+.search-field strong { font-size: 12px; font-weight: 500; color: #46543e; }
+.field-chevron { color: #9ba18e; }
+.field-chevron svg { width: 12px; height: 12px; }
+.search-submit { min-height: 47px; padding-inline: 23px; border-radius: 8px; flex: 0 0 auto; }
+
+.calendar-panel { padding: 28px 0 23px; border-bottom: 1px solid var(--line); scroll-margin-top: 25px; }
+.section-top { display: flex; justify-content: space-between; align-items: end; gap: 20px; }
+.section-overline { display: block; font-size: 7px; letter-spacing: .19em; color: #8c927f; font-weight: 500; }
+.section-top h2 { margin: 8px 0 0; font-family: var(--serif); font-size: 23px; letter-spacing: .015em; font-weight: 600; line-height: 1.5; }
+.heading-note { margin-left: 13px; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; font-size: 10px; font-weight: 400; color: #909482; vertical-align: 2px; }
+.calendar-month { display: flex; align-items: center; gap: 7px; padding-bottom: 4px; color: #7a8370; font-size: 10px; }
+.calendar-month svg { width: 13px; height: 13px; }
+.calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; margin-top: 20px; }
+.day { position: relative; display: flex; flex-direction: column; gap: 5px; align-items: center; justify-content: center; min-height: 73px; padding: 10px 4px 9px; border: 1px solid #e3e6d9; border-radius: 8px; background: #fdfcf7; transition: background .15s, border-color .15s, transform .15s; }
+.day:hover { border-color: #a5b391; background: #f1f4e9; transform: translateY(-1px); }
+.day-date { font-size: 12px; font-weight: 600; color: #59654e; }
+.day-week { font-size: 9px; color: #959b88; font-weight: 400; margin-left: 6px; }
+.day-count { display: inline-flex; gap: 5px; align-items: center; font-size: 10px; color: #6d8959; }
+.day-dot { width: 4px; height: 4px; border-radius: 50%; background: #90a978; }
+.day.no-rooms .day-count { color: #a1a796; }
+.day.no-rooms .day-dot { background: #c3c8b7; }
+.day.not-open { background: #eeeee5; border-color: #e8e8de; }
+.day.not-open .day-date, .day.not-open .day-count, .day.not-open .day-week { color: #a5a797; }
+.day.selected { color: #fffaf0; background: var(--forest); border-color: var(--forest); box-shadow: 0 3px 10px #1f4a3520; }
+.day.selected .day-date { color: #fffdf0; }
+.day.selected .day-week { color: #c0cdb5; }
+.day.selected .day-count { color: #e1eacb; }
+.day.selected .day-dot { background: #c5d7a3; }
+.day-today { position: absolute; top: 7px; right: 7px; font-size: 7px; color: #a1aa92; }
+.calendar-foot { display: flex; justify-content: space-between; align-items: center; gap: 15px; margin-top: 13px; }
+.calendar-legend { display: flex; gap: 17px; align-items: center; }
+.calendar-legend > span { display: flex; gap: 5px; align-items: center; font-size: 8px; color: #969b8a; white-space: nowrap; }
+.legend-dot { width: 5px; height: 5px; border-radius: 50%; display: inline-block; }
+.legend-dot.available { background: #91a879; }.legend-dot.empty { background: #c1c7b7; }.legend-dot.unopened { background: #d5d7c9; }
+.calendar-foot p { display: flex; align-items: center; gap: 4px; margin: 0; font-size: 8px; color: #a0a493; }
+.calendar-foot p svg { width: 11px; height: 11px; }
+
+.results-section { padding-top: 31px; scroll-margin-top: 25px; }
+.results-top { align-items: center; }
+.results-summary { margin: 7px 0 0; font-size: 10px; color: #969b8a; line-height: 1.7; }
+.sort-control { display: flex; align-items: center; gap: 5px; padding: 9px 0 9px 9px; color: #8a927f; }
+.sort-control svg { width: 14px; height: 14px; }
+.sort-control select { max-width: 120px; color: #7f8973; background: transparent; border: 0; font-size: 10px; }
+.filter-pills { display: flex; align-items: center; gap: 7px; margin: 18px 0; }
+.filter-pill { min-height: 31px; padding: 7px 15px; border: 1px solid #e3e6d9; background: transparent; border-radius: 6px; color: #7c866f; font-size: 10px; white-space: nowrap; }
+.filter-pill:hover { background: #edf0e4; }
+.filter-pill.active { background: #e9eedf; border-color: #d5dec4; color: #577046; font-weight: 550; }
+.sample-label { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; font-size: 8px; color: #a0a592; white-space: nowrap; }
+.sample-label .preview-dot { width: 4px; height: 4px; background: #b3bba2; }
+.station-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+.station-card { min-width: 0; border: 1px solid #e5e6dc; border-radius: 11px; background: #fffdf8; overflow: hidden; transition: transform .18s, box-shadow .18s, border-color .18s; }
+.station-card:hover { transform: translateY(-3px); box-shadow: 0 12px 30px #34432b09; border-color: #ccd4be; }
+.station-art { position: relative; height: 163px; overflow: hidden; background: #eee8d7; }
+.station-art > svg { width: 100%; height: 100%; object-fit: cover; }
+.room-badge { position: absolute; left: 14px; top: 13px; display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; color: #5d7550; background: #fffdf2e8; border: 1px solid #fffdf5b0; border-radius: 5px; font-size: 9px; }
+.room-badge > i { width: 4px; height: 4px; border-radius: 50%; background: #83a365; }
+.bookmark { position: absolute; right: 13px; top: 12px; width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid #fffdf7a0; background: #fffdf3dc; border-radius: 50%; color: #7a846a; }
+.bookmark svg { width: 14px; height: 14px; }
+.bookmark.saved { color: var(--forest); background: #e5ebd9; border-color: #cbd9b5; }
+.bookmark.saved svg { fill: currentColor; }
+.station-art-label { position: absolute; right: 12px; bottom: 10px; font-size: 7px; letter-spacing: .1em; color: #42523f75; }
+.station-body { padding: 17px 18px 16px; }
+.station-category { display: flex; align-items: center; gap: 5px; font-size: 8px; color: #909883; }
+.station-category [data-icon] svg { width: 11px; height: 11px; }
+.station-category .category-divider { width: 1px; height: 8px; background: #dbe0d0; margin-inline: 1px; }
+.station-body h3 { margin: 9px 0 8px; font-family: var(--serif); font-weight: 600; font-size: 19px; letter-spacing: .01em; line-height: 1.45; }
+.station-example { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; font-size: 9px; color: #a0a592; font-weight: 400; vertical-align: 2px; margin-left: 4px; white-space: nowrap; }
+.station-address { margin: 0; color: #9b9e90; font-size: 9px; line-height: 1.7; }
+.station-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 13px; }
+.station-tag { padding: 4px 6px; border-radius: 4px; font-size: 8px; color: #879178; background: #f0f2e9; }
+.station-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid #eceee4; padding-top: 13px; margin-top: 16px; }
+.station-foot p { display: flex; align-items: center; gap: 5px; font-size: 8px; color: #9da28e; margin: 0; }
+.station-foot p svg { width: 11px; height: 11px; }
+.detail-link { display: inline-flex; align-items: center; gap: 5px; padding: 6px 0 6px 8px; border: 0; color: #5d7751; font-size: 9px; font-weight: 550; background: transparent; white-space: nowrap; }
+.detail-link svg { width: 12px; height: 12px; }
+.reminder-banner { display: flex; align-items: center; gap: 17px; margin: 36px 0 38px; padding: 25px 28px; border-radius: 11px; background: #e9eddd; }
+.reminder-banner-icon { display: grid; place-items: center; width: 44px; height: 44px; color: #758962; border-radius: 50%; background: #f5f5e9; }
+.reminder-banner-icon svg { width: 21px; height: 21px; }
+.reminder-banner h3 { margin: 0; color: var(--forest); font-family: var(--serif); font-size: 20px; font-weight: 500; letter-spacing: .02em; }
+.reminder-banner p { margin: 7px 0 0; color: #849173; font-size: 9px; line-height: 1.8; }
+.reminder-banner p > span { margin-left: 6px; color: #9da58d; }
+.reminder-banner .button { margin-left: auto; white-space: nowrap; font-size: 10px; padding-inline: 17px; }
+.reminder-banner .button svg { width: 13px; height: 13px; }
+
+.site-footer { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 22px 0 26px; border-top: 1px solid var(--line); }
+.footer-brand { display: flex; align-items: center; gap: 7px; font-family: var(--serif); font-size: 11px; color: #8f9881; }
+.footer-brand svg { width: 15px; height: 15px; }
+.footer-note { display: flex; align-items: center; gap: 18px; font-size: 8px; color: #a0a694; }
+.footer-note > span { color: #aeb3a3; }
+
+.secondary-panel { min-height: calc(100vh - 230px); padding-top: 55px; padding-bottom: 55px; }
+.secondary-panel > .section-top { margin-bottom: 30px; }
+.secondary-panel h1 { margin: 13px 0 0; font-family: var(--serif); font-size: 32px; font-weight: 600; letter-spacing: .02em; line-height: 1.5; }
+.secondary-description { margin: 10px 0 0; font-size: 12px; color: #8b9480; line-height: 1.8; }
+.empty-state { grid-column: 1/-1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 65px 20px; min-height: 300px; border: 1px dashed #d8dfc9; border-radius: 12px; background: #fcfbf5; text-align: center; }
+.empty-symbol { display: grid; place-items: center; width: 55px; height: 55px; border-radius: 50%; color: #879b72; background: #edf1e3; }
+.empty-symbol svg { width: 24px; height: 24px; }
+.empty-state h3 { margin: 20px 0 0; font-family: var(--serif); font-size: 22px; font-weight: 500; }
+.empty-state p { max-width: 380px; margin: 10px 0 22px; font-size: 12px; line-height: 1.9; color: #929b83; }
+.notice-card { display: flex; gap: 11px; align-items: center; padding: 16px 20px; border-radius: 8px; background: #e9eddc; color: #7e8c6c; margin-bottom: 25px; }
+.notice-card > [data-icon] svg { width: 18px; height: 18px; }
+.notice-card p { margin: 0; font-size: 11px; line-height: 1.8; }
+.notice-card strong { display: block; color: #5c744a; font-weight: 550; }
+.monitor-list { display: grid; gap: 14px; }
+.management-entry { padding: 25px; margin-bottom: 20px; border: 1px solid var(--line); border-radius: 11px; background: var(--white); }
+.management-entry h2 { margin: 0; font-family: var(--serif); font-size: 23px; font-weight: 500; }
+.management-entry p { color: #8c967e; font-size: 11px; line-height: 1.8; margin: 10px 0 0; }
+.management-form { display: flex; gap: 10px; max-width: 550px; margin-top: 20px; }
+.management-form input { width: 100%; min-width: 0; border: 1px solid #dde2cf; border-radius: 7px; background: #fdfbf5; padding: 11px 13px; font-size: 12px; color: var(--forest); }
+.management-form .button { white-space: nowrap; }
+.management-message button { color: var(--forest); background: transparent; border: 0; padding: 5px; font-size: 11px; text-decoration: underline; text-underline-offset: 4px; }
+.management-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 26px 0 15px; }
+.management-heading h2 { margin: 0; font-family: var(--serif); font-size: 23px; font-weight: 500; }.management-heading > span { font-size: 9px; color: #9aa28e; }
+.button-demo { padding: 2px 5px; background: #ffffff16; border-radius: 4px; font-size: 8px; font-weight: 400; }
+.field-hint { color: #a1aa94; font-size: 9px; }
+.delivery-note { display: flex; align-items: center; gap: 9px; margin: 1px 0 20px; color: #7d8e6e; font-size: 10px; }.delivery-note svg { width: 17px; height: 17px; }.delivery-note small { display: block; margin-top: 5px; font-size: 9px; color: #a1aa94; }
+.monitor-card { display: flex; align-items: center; gap: 18px; padding: 22px 25px; border: 1px solid var(--line); background: var(--white); border-radius: 10px; }
+.monitor-symbol { display: grid; place-items: center; width: 47px; height: 47px; border-radius: 12px; color: #8ca078; background: #eef1e7; }
+.monitor-symbol svg { width: 21px; height: 21px; }
+.monitor-content { flex: 1; }
+.monitor-content h3 { margin: 0 0 9px; font-family: var(--serif); font-size: 19px; font-weight: 600; }
+.monitor-meta { display: flex; gap: 15px; flex-wrap: wrap; color: #8a947e; font-size: 10px; }
+.draft-badge { display: inline-block; padding: 6px 8px; border: 1px solid #dedcc9; color: #9a8d65; background: #f6f1e1; border-radius: 5px; font-size: 9px; white-space: nowrap; }
+.icon-button { display: inline-flex; align-items: center; justify-content: center; width: 35px; height: 35px; padding: 7px; border: 0; background: transparent; border-radius: 50%; color: #99a08c; }
+.icon-button:hover { background: #eef1e5; color: var(--forest); }
+.icon-button svg { width: 18px; height: 18px; }
+
+.app-dialog { width: min(485px, calc(100% - 30px)); max-height: calc(100dvh - 40px); padding: 0; border: 1px solid #ececdf; border-radius: 18px; background: var(--paper); color: var(--ink); box-shadow: 0 30px 100px #1c352c30; }
+.app-dialog::backdrop { background: #26382b60; backdrop-filter: blur(4px); }
+.dialog-content { position: relative; padding: 27px 33px 26px; }
+.dialog-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 23px; }
+.dialog-symbol { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 13px; color: #70845b; background: #e9eddc; }
+.dialog-symbol svg { width: 22px; height: 22px; }
+.dialog-content h2 { margin: 10px 0 0; font-family: var(--serif); font-weight: 600; font-size: 26px; line-height: 1.5; letter-spacing: .015em; }
+.dialog-description { margin: 9px 0 18px; color: #8e9781; font-size: 11px; line-height: 1.8; }
+.draft-notice { display: flex; align-items: center; gap: 7px; margin: 0 0 19px; padding: 10px 12px; border: 1px solid #e1e4d3; border-radius: 6px; background: #edf0e3; color: #8a957b; font-size: 9px; line-height: 1.8; }
+.draft-notice svg { width: 13px; height: 13px; }
+.form-label { display: flex; flex: 1; flex-direction: column; gap: 7px; min-width: 0; margin-bottom: 15px; color: #78836d; font-size: 10px; }
+.form-label input, .form-label select { min-width: 0; width: 100%; min-height: 42px; border: 1px solid #dde2cf; border-radius: 7px; background: #fffdf7; padding: 10px 12px; color: #4e6345; font-size: 11px; }
+.form-label input::placeholder { color: #a5ad98; }
+.form-row { display: flex; gap: 13px; }
+.form-error { min-height: 0; margin: 0; color: #a06045; font-size: 10px; }
+.form-error:not(:empty) { margin: -2px 0 14px; }
+.dialog-submit { width: 100%; margin-top: 2px; min-height: 45px; }
+.dialog-fineprint { margin: 12px 0 0; color: #a6ad9a; font-size: 9px; text-align: center; }
+.station-dialog .station-art { height: 205px; border-radius: 10px; margin-top: 20px; }
+.station-dialog .dialog-top { margin-bottom: 5px; }
+.station-dialog .dialog-content h2 { margin-top: 17px; }
+.station-dialog .station-tags { margin-block: 15px; }
+.detail-description { font-size: 12px; line-height: 2; color: #849178; }
+.official-placeholder { margin-top: 22px; width: 100%; background: #e4e8db; color: #98a38b; border-color: #dde2d2; }
+.official-placeholder:hover { transform: none; }
+.toast { position: fixed; z-index: 200; left: 50%; bottom: 25px; transform: translate(-50%, 12px); max-width: calc(100% - 40px); padding: 13px 20px; border-radius: 9px; background: var(--forest); color: #f5f5e7; font-size: 12px; line-height: 1.8; box-shadow: 0 8px 30px #203b2b25; pointer-events: none; opacity: 0; transition: transform .2s, opacity .2s; text-align: center; }
+.toast.visible { opacity: 1; transform: translate(-50%, 0); }
+
+@media (min-width: 1450px) { .hero { padding-top: 30px; padding-bottom: 45px; }.hero h1 { font-size: 59px; } }
+@media (max-width: 1100px) {
+  .shell { width: calc(100% - 56px); }
+  .site-header { gap: 25px; }.main-nav { gap: 23px; }
+  .hero { padding-inline: 8px; }.hero h1 { font-size: 46px; }.hero-art { max-width: 420px; }
+  .search-field { padding-inline: 17px; }.search-submit { padding-inline: 18px; }
+  .station-grid { gap: 15px; }.station-body { padding-inline: 15px; }.station-body h3 { font-size: 18px; }
+  .calendar-foot p { max-width: 300px; line-height: 1.7; }
+}
+@media (max-width: 850px) {
+  .shell { width: calc(100% - 44px); }
+  .site-header { gap: 22px; min-height: 90px; }.main-nav { gap: 18px; }.header-reminder { display: none; }
+  .hero { min-height: 315px; padding-bottom: 25px; }.hero h1 { font-size: 40px; }.hero-description { font-size: 11px; }.eyebrow { font-size: 8px; }
+  .art-stamp { right: 0; bottom: 55px; padding: 9px 11px; }.art-stamp > span:last-child { font-size: 8px; }.art-stamp strong { font-size: 11px; }.art-stamp > [data-icon] svg { width: 19px; }
+  .search-field { padding-inline: 12px; gap: 8px; }.search-keyword { flex: 1.2; }.search-field input { font-size: 10px; }.search-submit { padding-inline: 13px; font-size: 10px; }.search-submit [data-icon] { display: none; }
+  .station-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }.station-art { height: 175px; }
+  .calendar-foot { flex-direction: column; align-items: start; gap: 10px; }.calendar-foot p { max-width: none; }
+  .reminder-banner { padding: 22px; gap: 13px; }.reminder-banner p > span { display: block; margin-left: 0; }.reminder-banner h3 { font-size: 19px; }
+  .footer-note { flex-direction: column; align-items: end; gap: 6px; }
+}
+@media (max-width: 650px) {
+  .shell { width: calc(100% - 36px); }
+  .preview-strip { align-items: start; justify-content: start; padding: 8px 18px; gap: 7px; }.preview-strip .preview-dot { margin-top: 5px; }.preview-strip p { font-size: 8px; letter-spacing: 0; }.preview-divider { margin-inline: 2px; }
+  .site-header { min-height: 119px; display: grid; grid-template-columns: 1fr; gap: 4px; padding-top: 17px; padding-bottom: 5px; }
+  .brand { gap: 9px; }.brand-mark { width: 35px; height: 36px; border-radius: 10px 10px 4px 4px; }.brand-mark svg { width: 23px; height: 23px; }.brand strong { font-size: 18px; }.brand small { font-size: 6px; }
+  .main-nav { justify-content: start; gap: 26px; margin-left: 0; width: 100%; }.nav-link { min-height: 44px; padding-block: 12px; font-size: 11px; }
+  .hero { position: relative; display: block; min-height: 292px; padding: 30px 0 25px; overflow: hidden; }
+  .hero-copy { position: relative; z-index: 1; padding-left: 1px; }.eyebrow { font-size: 7px; gap: 5px; letter-spacing: .06em; }.eyebrow > span { width: 10px; }
+  .hero h1 { font-size: 40px; margin: 20px 0 16px; line-height: 1.35; letter-spacing: .015em; }
+  .hero-description { max-width: 215px; font-size: 9px; line-height: 1.95; }.hero-bottom { margin-top: 21px; font-size: 8px; gap: 9px; }.hero-location { gap: 4px; }.hero-location svg { width: 11px; height: 11px; }
+  .hero-art { position: absolute; width: 240px; right: -65px; top: 27px; opacity: .95; padding-bottom: 0; }.hero-art > svg { width: 100%; }.art-stamp, .art-caption { display: none; }
+  .discovery { padding-top: 5px; }
+  .search-bar { display: grid; grid-template-columns: 1fr 1.1fr; padding: 13px; gap: 13px 0; border-radius: 10px; }
+  .search-field { gap: 8px; padding: 3px 12px; }.search-district { padding-left: 0; }.search-date { padding-right: 0; border-right: 0; }.search-keyword { border-top: 1px solid var(--line); padding: 13px 8px 0 0; }.search-field-body { gap: 6px; }.search-field select, .search-field strong { font-size: 10px; }.field-label { font-size: 8px; }.field-icon svg { width: 16px; height: 16px; }.field-chevron svg { width: 10px; height: 10px; }.search-field input { font-size: 10px; }.search-submit { margin-top: 10px; min-height: 39px; margin-left: 12px; font-size: 11px; }.search-submit [data-icon] { display: inline-flex; }.search-submit [data-icon] svg { width: 13px; height: 13px; }
+  .calendar-panel { padding-top: 25px; padding-bottom: 19px; }.section-overline { font-size: 6px; letter-spacing: .17em; }.section-top h2 { font-size: 21px; margin-top: 7px; }.heading-note { display: none; }.calendar-top { gap: 5px; }.calendar-month { font-size: 7px; padding-bottom: 6px; gap: 4px; white-space: nowrap; }.calendar-month svg { width: 10px; height: 10px; }
+  .calendar-grid { margin-top: 16px; gap: 5px; }.day { min-height: 67px; gap: 7px; padding: 11px 1px 8px; border-radius: 6px; }.day-date { font-size: 10px; }.day-week { display: block; margin: 3px 0 0; font-size: 7px; }.day-count { font-size: 7px; gap: 3px; }.day-dot { width: 3px; height: 3px; }.day-today { font-size: 5px; top: 3px; right: 3px; }.calendar-foot { gap: 8px; margin-top: 12px; }.calendar-legend { gap: 12px; }.calendar-legend > span { font-size: 7px; gap: 4px; }.legend-dot { width: 4px; height: 4px; }.calendar-foot p { font-size: 7px; }
+  .results-section { padding-top: 25px; }.results-top { gap: 5px; }.results-summary { font-size: 8px; }.sort-control { gap: 3px; padding-left: 0; }.sort-control svg { width: 12px; height: 12px; }.sort-control select { max-width: 92px; font-size: 8px; }
+  .filter-pills { overflow: auto; scrollbar-width: none; margin-block: 15px; gap: 6px; padding: 2px 0; }.filter-pills::-webkit-scrollbar { display: none; }.filter-pill { min-height: 32px; padding: 7px 12px; font-size: 9px; }.sample-label { display: none; }
+  .station-grid { grid-template-columns: 1fr; gap: 17px; }.station-art { height: 182px; }.station-body { padding: 18px; }.station-body h3 { font-size: 22px; }.station-category { font-size: 9px; }.station-example { font-size: 10px; }.station-address { font-size: 10px; }.station-tag { font-size: 9px; padding: 5px 7px; }.station-foot p { font-size: 9px; }.detail-link { font-size: 10px; min-height: 33px; }.room-badge { font-size: 10px; padding: 6px 9px; }.bookmark { width: 35px; height: 35px; }.bookmark svg { width: 16px; height: 16px; }
+  .reminder-banner { position: relative; display: grid; grid-template-columns: 35px 1fr; gap: 11px; margin-block: 28px; padding: 21px 19px; }.reminder-banner-icon { width: 35px; height: 35px; }.reminder-banner-icon svg { width: 17px; height: 17px; }.reminder-banner h3 { font-size: 19px; }.reminder-banner p { font-size: 8px; }.reminder-banner .button { grid-column: 2; justify-self: start; margin-left: 0; margin-top: 2px; min-height: 36px; font-size: 9px; padding: 8px 13px; }
+  .site-footer { display: block; padding: 22px 0; }.footer-brand { font-size: 10px; gap: 6px; }.footer-brand svg { width: 13px; height: 13px; }.footer-note { flex-direction: row; align-items: center; margin-top: 13px; gap: 15px; font-size: 7px; }
+  .secondary-panel { padding-top: 34px; padding-bottom: 34px; min-height: calc(100vh - 270px); }.secondary-panel > .section-top { align-items: start; flex-direction: column; gap: 18px; }.secondary-panel h1 { font-size: 26px; }.secondary-description { font-size: 10px; }.secondary-panel > .section-top .button { font-size: 10px; min-height: 37px; }
+  .notice-card { padding: 13px; gap: 8px; }.notice-card p { font-size: 9px; }.monitor-card { gap: 11px; padding: 18px 15px; flex-wrap: wrap; }.monitor-symbol { width: 37px; height: 37px; }.monitor-symbol svg { width: 17px; height: 17px; }.monitor-content { flex: 1; min-width: 190px; }.monitor-content h3 { font-size: 18px; }.monitor-meta { font-size: 9px; gap: 8px; }.draft-badge { margin-left: 48px; }.monitor-card > .icon-button { margin-left: auto; }
+  .management-entry { padding: 20px; }.management-entry h2 { font-size: 22px; }.management-entry p { font-size: 10px; }.management-form { flex-direction: column; gap: 8px; }.management-form .button { align-self: start; min-height: 39px; font-size: 11px; }.management-heading h2 { font-size: 21px; }.management-heading > span { font-size: 8px; }
+  .empty-state { padding: 42px 20px; min-height: 280px; }.empty-state h3 { font-size: 20px; }.empty-state p { font-size: 11px; }
+  .app-dialog { max-height: calc(100dvh - 28px); border-radius: 14px; }.dialog-content { padding: 23px; }.dialog-content h2 { font-size: 24px; }.dialog-top { margin-bottom: 19px; }.form-row { gap: 10px; }.form-label input, .form-label select { font-size: 12px; padding-inline: 9px; }.draft-notice { font-size: 8px; }.toast { bottom: 20px; font-size: 11px; width: max-content; }
+}
+@media (max-width: 370px) {
+  .shell { width: calc(100% - 28px); }.hero-art { width: 210px; right: -71px; top: 53px; opacity: .8; }.hero h1 { font-size: 37px; }.hero-description { font-size: 8px; }.hero-bottom { font-size: 7px; }.calendar-month { font-size: 6px; }.section-top h2 { font-size: 20px; }.day-date { font-size: 9px; }.day-count { font-size: 6px; }.day-dot { display: none; }.search-field { gap: 5px; }.search-field strong { font-size: 9px; }.search-submit { font-size: 10px; }.monitor-content { min-width: 160px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+/* Simplified preview: readable labels and quiet visual hierarchy. */
+body { font-size: 14px; }
+.preview-strip { min-height: 39px; }.preview-strip p { font-size: 12px; color: #67715c; }
+.site-header { min-height: 87px; }
+.nav-link { min-height: 44px; font-size: 14px; }.nav-count { font-size: 11px; }
+.button { min-height: 44px; font-size: 14px; }.button-demo { font-size: 11px; }
+.hero { min-height: 220px; grid-template-columns: 1.35fr .65fr; padding: 12px 15px 26px; }
+.hero h1 { margin: 0; font-size: clamp(34px, 3.5vw, 46px); line-height: 1.45; letter-spacing: .015em; }
+.hero-art { max-width: 290px; padding: 0; }
+.hero-emphasis::after { height: 8px; bottom: 1px; }
+.discovery { padding-top: 0; padding-bottom: 35px; }
+.search-field { min-height: 50px; }.field-label { font-size: 12px; color: #69765e; }.search-field select, .search-field input, .search-field strong { font-size: 14px; line-height: 1.5; }.search-field input::placeholder { color: #7d8972; }.search-submit { min-height: 50px; font-size: 14px; }
+.section-top h2 { margin-top: 0; font-size: 24px; }.heading-note { font-size: 12px; color: #7d8870; }.calendar-month { font-size: 12px; color: #6e7a62; }
+.day { min-height: 79px; }.day-date { font-size: 14px; }.day-week { font-size: 11px; color: #748166; }.day-count { font-size: 12px; color: #607b4f; }.day.no-rooms .day-count { color: #7f8973; }.day.not-open .day-date, .day.not-open .day-count, .day.not-open .day-week { color: #838a78; }.day-today { display: none; }
+.calendar-legend > span, .calendar-foot p { font-size: 11px; color: #78826c; }.calendar-foot { align-items: center; }.calendar-foot p { line-height: 1.7; }
+.results-summary { font-size: 12px; color: #78846a; }.sort-control select { font-size: 12px; max-width: 120px; color: #637355; }.sort-control svg { width: 16px; height: 16px; }
+.sort-control, .sort-control select { min-height: 44px; }
+.filter-pill { min-height: 44px; padding: 10px 17px; font-size: 13px; }.station-category { font-size: 12px; color: #6d7c60; }.station-category svg { width: 13px !important; height: 13px !important; }.station-body h3 { font-size: 21px; }.station-example { font-size: 11px; color: #7d896f; }.station-address { font-size: 12px; color: #78836b; }.station-tag { font-size: 11px; color: #6e7c60; padding: 5px 7px; }.room-badge { font-size: 12px; }.bookmark { width: 44px; height: 44px; right: 10px; top: 10px; }.bookmark svg { width: 17px; height: 17px; }.station-foot { gap: 6px; }.station-foot p { font-size: 11px; line-height: 1.7; color: #7b866e; }.detail-link { min-height: 44px; font-size: 12px; }.detail-link svg { width: 14px; height: 14px; }
+.site-footer { padding-block: 22px; }.footer-brand { font-family: inherit; font-size: 12px; color: #77846a; }
+.secondary-description { font-size: 14px; color: #748366; }.secondary-panel h1 { margin: 0; }.management-entry p { font-size: 13px; color: #718063; }.management-form input { font-size: 16px; min-height: 46px; }.management-message button { font-size: 13px; min-height: 44px; }.management-heading > span { font-size: 11px; }.monitor-meta { font-size: 12px; }.draft-badge { font-size: 11px; }.icon-button { min-width: 44px; min-height: 44px; }
+.form-label { font-size: 12px; }.form-label input, .form-label select { min-height: 46px; font-size: 16px; }.field-hint { font-size: 11px; }.dialog-description, .detail-description { font-size: 14px; color: #718165; }.draft-notice { font-size: 11px; color: #718164; }.dialog-fineprint, .delivery-note small { font-size: 11px; line-height: 1.8; }.delivery-note { font-size: 13px; }.form-error { font-size: 12px; }.dialog-submit { min-height: 46px; }.empty-state p { font-size: 14px; }.toast { font-size: 14px; }
+@media (max-width: 850px) {
+  .hero { min-height: 200px; }.hero-art { max-width: 240px; }.hero h1 { font-size: 36px; }
+  .search-field { padding-inline: 13px; }.search-field strong { font-size: 13px; }.search-field input, .search-field select { font-size: 14px; }.search-submit { font-size: 13px; }
+  .calendar-foot { align-items: start; }.station-foot p { font-size: 11px; }
+}
+@media (max-width: 650px) {
+  .preview-strip { min-height: 46px; padding: 8px 18px; }.preview-strip p { font-size: 11px; line-height: 1.65; }.preview-strip .preview-dot { margin-top: 7px; }
+  .site-header { min-height: 116px; gap: 6px; }.brand strong { font-size: 21px; }.brand-mark { width: 37px; height: 39px; }.main-nav { gap: 29px; }.nav-link { min-height: 47px; font-size: 14px; }
+  .hero { display: flex; align-items: center; gap: 3px; min-height: 160px; padding: 15px 0 22px; overflow: visible; }.hero-copy { flex: 1; padding: 0; }.hero h1 { font-size: 31px; line-height: 1.55; }.hero-art { position: static; width: 135px; max-width: 135px; flex: 0 0 135px; opacity: 1; }.hero-emphasis { white-space: nowrap; }
+  .search-bar { padding: 15px; gap: 14px 0; }.search-field { min-height: 52px; gap: 7px; }.search-field-body { gap: 7px; }.search-district { padding-left: 0; }.search-date { padding-inline: 11px 0; }.search-field strong { font-size: 13px; }.search-field select { font-size: 14px; }.search-field input { font-size: 14px; }.field-label { font-size: 12px; }.search-keyword { min-height: 51px; padding-top: 14px; }.search-submit { min-height: 46px; font-size: 14px; margin-top: 12px; }.search-submit [data-icon] { display: none; }
+  .calendar-top { gap: 8px; }.section-top h2 { font-size: 22px; }.calendar-month { font-size: 11px; padding-bottom: 4px; }.calendar-panel { padding-top: 27px; }.calendar-grid { gap: 5px; }.day { min-height: 81px; padding: 10px 1px; gap: 9px; }.day-date { font-size: 11px; }.day-week { margin-top: 5px; font-size: 11px; }.day-count { font-size: 10px; gap: 3px; }.day-dot { display: none; }.calendar-legend { gap: 15px; }.calendar-legend > span, .calendar-foot p { font-size: 11px; }.calendar-foot { gap: 9px; margin-top: 14px; }
+  .results-summary { font-size: 11px; line-height: 1.9; max-width: 240px; }.sort-control select { font-size: 12px; max-width: 98px; }.results-top { align-items: start; }.sort-control { padding-top: 3px; }.filter-pills { margin-top: 17px; }.filter-pill { min-height: 44px; font-size: 13px; padding: 10px 14px; }.station-body h3 { font-size: 23px; }.station-address { font-size: 13px; }.station-tag { font-size: 12px; }.room-badge { font-size: 12px; }.station-category { font-size: 12px; }.station-foot p { font-size: 11px; }.detail-link { font-size: 13px; }.station-body { padding: 18px 20px 14px; }.station-art { height: 180px; }.station-foot { margin-top: 15px; padding-top: 9px; }
+  .secondary-panel > .section-top .button { min-height: 44px; font-size: 14px; }.secondary-panel h1 { font-size: 28px; }.secondary-description { font-size: 13px; }.management-entry p { font-size: 13px; }.management-form .button { font-size: 14px; min-height: 44px; }.management-heading > span { font-size: 11px; }.monitor-meta { font-size: 12px; line-height: 1.8; }.draft-badge { font-size: 11px; }.monitor-content { min-width: 190px; }.empty-state p { font-size: 14px; }
+  .dialog-description { font-size: 14px; }.draft-notice { font-size: 11px; }.form-label { font-size: 12px; }.form-label input, .form-label select { font-size: 16px; }.toast { font-size: 13px; }.site-footer { padding-block: 22px; }.footer-brand { font-size: 12px; }
+}
+@media (max-width: 370px) {
+  .hero h1 { font-size: 28px; }.hero-art { width: 115px; max-width: 115px; flex-basis: 115px; }.search-field strong { font-size: 12px; }.search-field { gap: 5px; }.field-label { font-size: 12px; }.calendar-month { font-size: 11px; }.day-date { font-size: 11px; }.day-count { font-size: 10px; }.calendar-legend { gap: 12px; }.results-summary { max-width: 195px; }
+}
+.search-date strong { white-space: nowrap; }
+@media (max-width: 600px) {
+  .shell { width: calc(100% - 28px); }
+  .calendar-grid { gap: 4px; }
+  .stay-length { display: none; }
+}
+
+/* Welcome area retained from the approved first visual direction. */
+.hero { display: grid; grid-template-columns: 1.05fr 1fr; align-items: center; gap: 22px; min-height: 390px; padding: 24px 24px 38px; }
+.hero-copy { padding-left: 4px; }
+.eyebrow { font-size: 12px; letter-spacing: .06em; color: #78846b; }
+.hero h1 { margin: 24px 0 22px; font-size: 56px; line-height: 1.35; letter-spacing: .02em; }
+.hero-emphasis::after { height: 10px; bottom: 3px; }
+.hero-description { max-width: none; margin: 0; font-size: 14px; line-height: 1.95; color: #77816d; }
+.hero-bottom { margin-top: 26px; font-size: 12px; gap: 15px; color: #7c8571; }
+.hero-location { gap: 6px; color: #647c58; }.hero-location svg { width: 14px; height: 14px; }
+.hero-art { position: relative; width: 100%; max-width: 470px; justify-self: end; padding-bottom: 26px; }
+.art-stamp { display: flex; right: -6px; bottom: 75px; padding: 13px 16px; }
+.art-stamp > span:last-child { font-size: 11px; }.art-stamp strong { font-size: 15px; }
+.art-caption { display: block; bottom: 3px; font-size: 11px; letter-spacing: .15em; }
+@media (max-width: 1100px) {
+  .hero { min-height: 365px; padding: 22px 10px 32px; gap: 16px; }.hero h1 { font-size: 48px; }.hero-art { max-width: 420px; }
+}
+@media (max-width: 850px) {
+  .hero { min-height: 340px; gap: 10px; }.hero h1 { font-size: 42px; }.hero-description { font-size: 13px; }.hero-bottom { gap: 10px; font-size: 11px; }.eyebrow { font-size: 11px; }.hero-art { max-width: 360px; }.art-stamp { right: -3px; bottom: 62px; padding: 10px 12px; }.art-stamp > span:last-child { font-size: 11px; }.art-stamp strong { font-size: 14px; }.art-caption { font-size: 11px; }
+}
+@media (max-width: 650px) {
+  .hero { display: grid; grid-template-columns: 1fr; gap: 0; min-height: 0; padding: 27px 0 26px; overflow: visible; }
+  .hero-copy { padding: 0; }.eyebrow { font-size: 12px; gap: 7px; letter-spacing: .01em; }.eyebrow > span { width: 13px; }
+  .hero h1 { margin: 23px 0 18px; font-size: 38px; line-height: 1.4; letter-spacing: .015em; }.hero-emphasis { white-space: nowrap; }
+  .hero-description { font-size: 14px; line-height: 1.95; max-width: none; }.hero-bottom { margin-top: 22px; font-size: 12px; gap: 12px; flex-wrap: wrap; row-gap: 8px; }.hero-location svg { width: 14px; height: 14px; }
+  .hero-art { position: relative; width: 280px; max-width: 280px; flex: none; justify-self: center; right: auto; top: auto; padding-bottom: 29px; margin-top: 8px; opacity: 1; }
+  .art-stamp { display: flex; right: -11px; bottom: 60px; padding: 10px 12px; gap: 8px; }.art-stamp > [data-icon] svg { width: 22px; height: 22px; }.art-stamp > span:last-child { font-size: 11px; }.art-stamp strong { font-size: 14px; }
+  .art-caption { display: block; font-size: 11px; letter-spacing: .12em; }
+}
+@media (max-width: 370px) {
+  .hero h1 { font-size: 36px; }.hero-bottom { font-size: 11px; gap: 10px; }
+}
+
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    <div class="preview-strip">
+      <span class="preview-dot" aria-hidden="true"></span>
+      <p><strong>设计预览</strong> · 驿站及房源为虚构，查询与邮件尚未接通。</p>
+    </div>
+
+    <header class="site-header shell">
+      <a class="brand" href="#find" aria-label="青年驿站，回到找驿站">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M5 15 16 5l11 10v12H5Z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/><path d="M12 27v-9h8v9M12 13h8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M25 4v6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span>
+        <span><strong>青年驿站</strong></span>
+      </a>
+      <nav class="main-nav" aria-label="主要导航">
+        <button class="nav-link active" type="button" data-tab="find" aria-current="page">找驿站</button>
+        <button class="nav-link" type="button" data-tab="favorites">我的收藏 <span id="favorite-count" class="nav-count">0</span></button>
+        <button class="nav-link" type="button" data-tab="monitors">有房提醒 <span id="monitor-count" class="nav-count hidden">0</span></button>
+      </nav>
+      <button class="button button-forest header-reminder" type="button" data-open-reminder><span data-icon="bell"></span>建立提醒</button>
+    </header>
+
+    <main id="main">
+      <div id="find-panel" class="tab-panel">
+        <section class="hero shell" aria-labelledby="hero-title">
+          <div class="hero-copy">
+            <div class="eyebrow"><span></span>每一次出发，都值得被好好安放</div>
+            <h1 id="hero-title">初到上海，<br />先安顿好<span class="hero-emphasis">自己。</span></h1>
+            <p class="hero-description">把找住处的时间，留给新的生活。<br />发现适合你的青年驿站，轻松规划下一段旅程。</p>
+            <div class="hero-bottom"><span class="hero-location"><span data-icon="pin"></span>上海 · 全市驿站</span><span class="hero-hairline"></span><span>查房源 · 存收藏 · 订提醒</span></div>
+          </div>
+          <div class="hero-art" aria-hidden="true">
+            <svg viewBox="0 0 510 335" fill="none">
+              <defs><linearGradient id="hero-sky" x1="255" y1="12" x2="255" y2="313" gradientUnits="userSpaceOnUse"><stop stop-color="#f2e9d7"/><stop offset="1" stop-color="#e8e4d4"/></linearGradient><pattern id="tiny-windows" width="24" height="25" patternUnits="userSpaceOnUse"><rect x="8" y="6" width="8" height="12" rx="1" fill="#fff4d9"/></pattern></defs>
+              <path d="M71 316V141a168 168 0 0 1 336 0v175Z" fill="url(#hero-sky)"/>
+              <circle cx="348" cy="76" r="31" fill="#dfac70" opacity=".7"/>
+              <path d="M111 112h32m-16-5h32m158 35h35" stroke="#fffaf0" stroke-width="6" stroke-linecap="round"/>
+              <path d="M99 265V181h34v-32h41v116M316 266V121h31v-21h9v21h14v145M374 264V172h30v92" fill="#b1b8a4"/>
+              <path d="M117 182h42v83h-42zM329 146h28v119h-28z" fill="url(#tiny-windows)" opacity=".65"/>
+              <path d="M174 268V122l62-28 66 28v146Z" fill="#d49b78"/>
+              <path d="M185 131h104v137H185Z" fill="#e8bb90"/>
+              <path d="m170 124 66-32 70 32" stroke="#966e58" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M215 268v-45a22 22 0 0 1 44 0v45" fill="#426251"/>
+              <path d="M237 210v58M221 226h32" stroke="#e0c391" stroke-width="2"/>
+              <path d="M196 151a10 10 0 0 1 20 0v17h-20zM257 151a10 10 0 0 1 20 0v17h-20z" fill="#5b7560"/>
+              <path d="M204 140v28M267 140v28M196 154h20M257 154h20" stroke="#e5cba2" stroke-width="2"/>
+              <path d="M194 176h24M255 176h24" stroke="#b77e60" stroke-width="4" stroke-linecap="round"/>
+              <rect x="198" y="184" width="78" height="12" rx="2" fill="#f5ead2"/><path d="M219 190h36" stroke="#637b60" stroke-width="2" stroke-linecap="round"/>
+              <path d="M88 275h325" stroke="#b7b5a2" stroke-width="2" stroke-linecap="round"/>
+              <path d="M155 269V202M159 234c-39 1-45-48-21-62 19-11 31 5 34 20 19 15 8 40-13 42Z" fill="#55715b"/>
+              <path d="M155 268v-53m0 21-12-13m12 3 12-14" stroke="#344e3a" stroke-width="3" stroke-linecap="round"/>
+              <path d="M329 272v-38M329 242c-25-7-28-30-8-40 20-10 39 22 8 40Z" fill="#759172"/><path d="M329 266v-43" stroke="#4c674b" stroke-width="3"/>
+              <path d="M235 276c-12 8-9 13 5 18s16 10 5 17" stroke="#d2c6a9" stroke-width="15" stroke-linecap="round"/>
+              <ellipse cx="114" cy="281" rx="18" ry="5" fill="#c7c6af"/><ellipse cx="369" cy="281" rx="22" ry="5" fill="#c7c6af"/>
+              <path d="M111 268v-18m0 10-7-8m7 3 8-8" stroke="#8b9c74" stroke-width="3" stroke-linecap="round"/><path d="M103 267h17l-3 13h-11z" fill="#b78364"/>
+              <path d="M358 268h22l-4 13h-14z" fill="#ae7d5d"/><path d="M368 268v-27m0 14c-15-1-15-16-9-18 6-2 12 8 9 18Zm1 2c13-2 17-16 10-18-6-1-11 9-10 18Z" fill="#7e966b"/>
+              <path d="m280 54 5-5 5 5m-35 6 4-4 4 4" stroke="#8d9c82" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <div class="art-stamp"><span data-icon="leaf"></span><span>让城市的第一晚<br /><strong>多一份安心。</strong></span></div>
+            <div class="art-caption">A LITTLE PLACE. A NEW BEGINNING.</div>
+          </div>
+        </section>
+
+        <section class="discovery shell" aria-label="查找驿站">
+          <div class="search-bar">
+            <label class="search-field search-district"><span class="field-icon" data-icon="pin"></span><span class="search-field-body"><span class="field-label">想住在哪个区域</span><select id="district-filter" aria-label="选择区域"><option value="">上海全市</option><option>徐汇区</option><option>静安区</option><option>杨浦区</option><option>浦东新区</option><option>黄浦区</option><option>长宁区</option></select></span></label>
+            <button id="date-jump" type="button" class="search-field search-date"><span class="field-icon" data-icon="calendar"></span><span class="search-field-body"><span class="field-label">计划入住 / 离店</span><strong id="search-date-label"><span>10.15 — 10.17</span><span class="stay-length"> · 2 晚</span></strong></span><span class="field-chevron" data-icon="chevron"></span></button>
+            <label class="search-field search-keyword"><span class="field-icon" data-icon="search"></span><span class="search-field-body"><span class="field-label">还有什么偏好</span><input id="keyword-filter" type="search" placeholder="搜索驿站名称、区域" autocomplete="off" /></span></label>
+            <button id="search-button" class="button button-forest search-submit" type="button"><span data-icon="search"></span>看看房源</button>
+          </div>
+
+          <section id="calendar-section" class="calendar-panel" aria-labelledby="calendar-heading">
+            <div class="section-top calendar-top"><div><h2 id="calendar-heading">房源日历<span class="heading-note">未来 21 天</span></h2></div><div class="calendar-month">2026 年 10 月 — 11 月</div></div>
+            <div id="calendar" class="calendar-grid" role="group" aria-label="示例日期选择，2026 年 10 月 13 日至 11 月 2 日"></div>
+            <div class="calendar-foot"><div class="calendar-legend"><span><i class="legend-dot available"></i>有房</span><span><i class="legend-dot empty"></i>暂无房源</span><span><i class="legend-dot unopened"></i>尚未开放</span></div><p>日历为单日概览，查询按入住区间。</p></div>
+          </section>
+
+          <section class="results-section" aria-labelledby="results-heading">
+            <div class="section-top results-top"><div><h2 id="results-heading">可选驿站</h2><p id="results-summary" class="results-summary" role="status" aria-live="polite"></p></div><label class="sort-control"><span data-icon="sort"></span><select id="sort-filter" aria-label="驿站排序"><option value="recommended">推荐排序</option><option value="rooms">房源优先</option><option value="name">名称排序</option></select></label></div>
+            <div class="filter-pills" aria-label="快速筛选区域"><button class="filter-pill active" type="button" data-district="" aria-pressed="true">全部区域</button><button class="filter-pill" type="button" data-district="徐汇区" aria-pressed="false">徐汇区</button><button class="filter-pill" type="button" data-district="静安区" aria-pressed="false">静安区</button><button class="filter-pill" type="button" data-district="杨浦区" aria-pressed="false">杨浦区</button><button class="filter-pill" type="button" data-district="浦东新区" aria-pressed="false">浦东新区</button></div>
+            <div id="results" class="station-grid"></div>
+          </section>
+        </section>
+      </div>
+
+      <section id="favorites-panel" class="tab-panel shell secondary-panel hidden" aria-labelledby="favorites-title">
+        <div class="section-top"><div><h1 id="favorites-title">我的收藏</h1><p class="secondary-description">保存在当前页面，刷新后清空。</p></div><button class="button button-outline" type="button" data-go-find>继续找驿站<span data-icon="arrow"></span></button></div>
+        <div id="favorites" class="station-grid"></div>
+      </section>
+
+      <section id="monitors-panel" class="tab-panel shell secondary-panel hidden" aria-labelledby="monitors-title">
+        <div class="section-top"><div><h1 id="monitors-title">有房提醒</h1><p class="secondary-description">验证邮箱后，接收有房通知。无需注册。</p></div><button class="button button-forest" type="button" data-open-reminder><span data-icon="plus"></span>建立提醒</button></div>
+        <div class="management-entry"><div><h2>管理我的提醒</h2><p>获取邮件专属链接，修改条件或取消提醒。</p></div><form id="management-form" class="management-form"><label class="sr-only" for="management-email">接收管理链接的邮箱</label><input id="management-email" type="email" placeholder="你的邮箱地址" value="demo@example.com" required /><button class="button button-forest" type="submit">获取管理链接<span class="button-demo">演示</span></button></form><p id="management-message" class="management-message hidden">未发送邮件。<button type="button" id="open-demo-management">模拟打开管理链接 →</button></p></div>
+        <div id="management-drafts" class="hidden"><div class="management-heading"><h2>我的提醒</h2><span>专属链接管理 · 示例页面</span></div><div id="monitors" class="monitor-list"></div></div>
+      </section>
+    </main>
+
+    <footer class="site-footer shell"><div class="footer-brand"><span data-icon="leaf"></span><span>青年驿站 · 上海</span></div></footer>
+
+    <dialog id="stay-dialog" class="app-dialog" aria-labelledby="stay-title"><form id="stay-form" class="dialog-content"><div class="dialog-top"><span class="dialog-symbol" data-icon="calendar"></span><button class="icon-button close-dialog" type="button" data-close-dialog aria-label="关闭日期选择"><span data-icon="close"></span></button></div><h2 id="stay-title">选择入住日期</h2><p class="dialog-description">查看整个入住区间的可用房源。</p><div class="form-row"><label class="form-label">入住日期<input id="stay-start" type="date" value="2026-10-15" min="2026-10-13" max="2026-11-02" required /></label><label class="form-label">离店日期<input id="stay-end" type="date" value="2026-10-17" min="2026-10-14" required /></label></div><p id="stay-error" class="form-error" role="alert"></p><button class="button button-forest dialog-submit" type="submit">查看区间示例房源<span data-icon="arrow"></span></button><p class="dialog-fineprint">仅演示日期选择，不会发起真实查询。</p></form></dialog>
+
+    <dialog id="reminder-dialog" class="app-dialog" aria-labelledby="reminder-title">
+      <form id="reminder-form" class="dialog-content">
+        <div class="dialog-top"><span class="dialog-symbol" data-icon="bell"></span><button class="icon-button close-dialog" type="button" data-close-dialog aria-label="关闭提醒窗口"><span data-icon="close"></span></button></div>
+        <h2 id="reminder-title">建立有房提醒</h2><p class="dialog-description">有房时发邮件，随时通过专属链接取消。</p>
+        <div class="draft-notice"><span data-icon="info"></span>设计预览：邮箱验证与通知均为模拟，不会发送邮件。</div>
+        <label class="form-label">接收提醒的邮箱<input id="reminder-email" name="email" type="email" placeholder="you@example.com" value="demo@example.com" required /><span class="field-hint">预填演示邮箱，无需提供真实地址。</span></label>
+        <label class="form-label">提醒名称<input id="reminder-name" name="name" type="text" placeholder="例如：上海的第一站" maxlength="40" /></label>
+        <label class="form-label">关注区域<select id="reminder-district" name="district"><option value="">上海全市</option><option>徐汇区</option><option>静安区</option><option>杨浦区</option><option>浦东新区</option><option>黄浦区</option><option>长宁区</option></select></label>
+        <div class="form-row"><label class="form-label">计划入住<input id="reminder-start" name="start" type="date" value="2026-10-15" min="2026-10-15" max="2026-11-02" required /></label><label class="form-label">计划离店<input id="reminder-end" name="end" type="date" value="2026-10-17" min="2026-10-16" required /></label></div>
+        <div class="delivery-note"><span data-icon="mail"></span><span>电子邮件通知<small>计划每 15 分钟检查 · 演示尚未运行</small></span></div>
+        <p id="reminder-error" class="form-error" role="alert"></p>
+        <button class="button button-forest dialog-submit" type="submit"><span data-icon="mail"></span>发送验证邮件<span class="button-demo">演示</span></button><p class="dialog-fineprint">正式版验证邮箱后启用。当前只生成草稿，刷新后清空。</p>
+      </form>
+    </dialog>
+
+    <dialog id="verify-dialog" class="app-dialog" aria-labelledby="verify-title"><div class="dialog-content"><div class="dialog-top"><span class="dialog-symbol" data-icon="mail"></span><button class="icon-button close-dialog" type="button" data-close-dialog aria-label="关闭邮箱验证演示"><span data-icon="close"></span></button></div><h2 id="verify-title">验证邮箱</h2><p class="dialog-description">正式版会发送验证链接到 <strong id="verify-email"></strong>。点击邮件中的链接，才会启用提醒。</p><div class="draft-notice"><span data-icon="info"></span>这是流程演示，未发送任何邮件，也未启动监控。</div><button id="simulate-verify" class="button button-forest dialog-submit" type="button">模拟完成邮箱验证<span data-icon="arrow"></span></button><p class="dialog-fineprint">正式版通过邮件专属链接管理或取消提醒，无需注册。</p></div></dialog>
+
+    <dialog id="station-dialog" class="app-dialog station-dialog" aria-labelledby="station-dialog-title"><div id="station-dialog-content" class="dialog-content"></div></dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script>
+/* Independent visual prototype. All names, addresses, counts, and reminders below are fictional. */
+"use strict";
+
+const iconPaths = {
+  pin: '<path d="M19 10c0 5-7 10-7 10S5 15 5 10a7 7 0 1 1 14 0Z"/><circle cx="12" cy="10" r="2.2"/>',
+  calendar: '<rect x="4" y="5" width="16" height="16" rx="2"/><path d="M8 3v4m8-4v4M4 10h16m-11 4h1m4 0h1m-6 3h1"/>',
+  search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/>',
+  bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Zm-8 12h4"/>',
+  leaf: '<path d="M20 4C9 2 2 9 5 15c3 7 15 5 15-11Z"/><path d="M4 21 16 9M8 17v-6m0 6h6"/>',
+  chevron: '<path d="m7 10 5 5 5-5"/>',
+  arrow: '<path d="M4 12h15m-5-5 5 5-5 5"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.5"/>',
+  sort: '<path d="M5 6h15M5 12h11M5 18h6"/>',
+  bookmark: '<path d="M6 4h12v17l-6-4-6 4V4Z"/>',
+  close: '<path d="m6 6 12 12M6 18 18 6"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  trash: '<path d="M4 7h16M9 4h6l1 3H8l1-3Zm-3 3 1 14h10l1-14M10 11v6m4-6v6"/>',
+  home: '<path d="m3 10 9-7 9 7v11H3V10Zm6 11v-8h6v8"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/>',
+};
+
+function icon(name) {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${iconPaths[name] || iconPaths.home}</svg>`;
+}
+function hydrateIcons(root = document) {
+  root.querySelectorAll("[data-icon]").forEach((el) => { el.innerHTML = icon(el.dataset.icon); });
+}
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+}
+
+const stations = [
+  { id: "wutong", name: "梧桐里青年驿站", district: "徐汇区", address: "示例梧桐路 28 号", tags: ["梧桐街区", "近地铁", "安静舒适"], art: "window", colors: ["#e4e6d5", "#e8d4ad", "#678261"], counts: [0, 0, 4, 3, 0, 2, 4, 4, 1, 3, 2, 0, 4, 2, 1, 4, 3, 2, 0, 2, 1], description: "这里是一处虚构的梧桐街区驿站。设计中用自然光、绿植与温暖的窗边表达安静的居住体验。交通、配套及地址均为演示内容，正式信息以官方页面为准。" },
+  { id: "shiguang", name: "时光里青年驿站", district: "静安区", address: "示例时光路 16 号", tags: ["城市生活", "生活便利", "公共空间"], art: "building", colors: ["#eadccb", "#be876e", "#73896a"], counts: [0, 0, 3, 2, 0, 2, 5, 3, 2, 2, 1, 0, 4, 2, 1, 2, 4, 1, 0, 3, 0], description: "这是一处虚构的城市街角驿站。暖色砖墙与一楼的小门廊，是对初来上海时安心落脚的想象。所有房源、地址和配套均为示例。" },
+  { id: "jiangwan", name: "江湾书舍青年驿站", district: "杨浦区", address: "示例书舍路 32 号", tags: ["书香氛围", "共享客厅", "滨水漫步"], art: "riverside", colors: ["#e2e6df", "#b6b9a0", "#758f79"], counts: [0, 0, 2, 2, 0, 1, 4, 3, 1, 2, 1, 0, 3, 2, 1, 2, 3, 1, 0, 2, 0], description: "这是一处虚构的滨水驿站。书架、共享客厅与河边慢步的生活感，只用于展示产品信息层级和视觉语言，不能作为真实申请信息。" },
+  { id: "xuqing", name: "序晴青年驿站", district: "浦东新区", address: "示例晨光路 8 号", tags: ["明亮采光", "近地铁", "独立书桌"], art: "window", colors: ["#e9e2cf", "#dac99e", "#68836a"], counts: [0, 0, 5, 3, 0, 2, 6, 3, 2, 2, 1, 0, 5, 2, 2, 3, 4, 2, 0, 2, 1], description: "这是一处虚构的明亮驿站。通过柔和的室内色彩和简洁配套标签展示卡片体验。房源数字只用于演示交互。" },
+  { id: "yueli", name: "悦里青年驿站", district: "黄浦区", address: "示例悦里路 12 号", tags: ["城市街区", "共享厨房", "生活便利"], art: "building", colors: ["#e8e3d6", "#b58e72", "#7c8a63"], counts: [0, 0, 4, 2, 0, 2, 5, 3, 1, 3, 1, 0, 4, 2, 1, 3, 3, 1, 0, 2, 1], description: "这是一处虚构的街区驿站。街角植物、门廊与生活配套旨在营造温暖、清晰、可信的找房体验。所有展示数据均为示例。" },
+  { id: "qinghe", name: "青禾青年驿站", district: "长宁区", address: "示例青禾路 20 号", tags: ["绿意街区", "安静舒适", "共享客厅"], art: "riverside", colors: ["#e7e8d8", "#c4c3a1", "#6f8b6b"], counts: [0, 0, 0, 0, 0, 1, 3, 2, 0, 1, 1, 0, 2, 1, 1, 2, 2, 1, 0, 1, 0], description: "这是一处虚构的绿意街区驿站。内容只服务于设计评审，不代表上海存在同名驿站，也不代表可申请的房源。" },
+];
+
+const days = Array.from({ length: 21 }, (_, index) => {
+  const date = new Date(Date.UTC(2026, 9, 13 + index));
+  return { index, date: date.toISOString().slice(0, 10), month: date.getUTCMonth() + 1, day: date.getUTCDate(), weekday: ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][date.getUTCDay()], total: stations.reduce((count, station) => count + station.counts[index], 0) };
+});
+const state = { selectedDay: 2, endDate: "2026-10-17", district: "", keyword: "", sort: "recommended", tab: "find", favorites: new Set(), drafts: [], managementOpen: false };
+let toastTimer;
+
+function dateAfter(isoDate, offset) {
+  const date = new Date(`${isoDate}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + offset);
+  return date.toISOString().slice(0, 10);
+}
+function shortDate(isoDate) { return isoDate.slice(5).replace("-", "."); }
+function stayNights() { return Math.round((Date.parse(state.endDate) - Date.parse(days[state.selectedDay].date)) / 86_400_000); }
+
+function stationArt(station) {
+  const [background, wall, green] = station.colors;
+  const frame = `<rect width="390" height="190" fill="${background}"/>`;
+  let art;
+  if (station.art === "window") {
+    art = `<path d="M0 0h390v190H0z" fill="${background}"/><path d="M0 0h162v190H0z" fill="${wall}" opacity=".28"/><path d="m163 20 101 0v151H163Z" fill="#f3f0db"/><path d="M177 42a37 37 0 0 1 74 0v102h-74Z" fill="#b4c2aa"/><path d="M179 78h70M214 23v122" stroke="#f7f1df" stroke-width="7"/><path d="m224 86 25 26v31h-70v-21l18-22 14 13Z" fill="#819c7a" opacity=".55"/><rect x="164" y="144" width="100" height="8" rx="2" fill="#b9ab85"/><path d="M140 13h24v146h-24m124-146h24v146h-24" fill="#e9dcc1"/><path d="M145 17v134m10-134v134m120-134v134m7-134v134" stroke="#d8cbae" stroke-width="2"/><path d="M58 160h67v30H58z" fill="#b59676"/><path d="M69 133h47v28H69z" fill="#d9bea0"/><path d="M78 130c-29-10-20-42-8-38 10 3 14 23 8 38Zm11 5c22-10 30-40 16-43-14-4-20 28-16 43Z" fill="${green}"/><path d="M85 150v-36" stroke="#556d50" stroke-width="2"/><path d="M75 145h22l-4 17H79Z" fill="#b77f61"/><path d="M292 159h67v7h-67zM299 166v24m52-24v24" fill="#998c6c"/><path d="M300 131h44v27h-44z" fill="#ede3c8"/><path d="M304 137h36m-36 6h36m-36 6h36" stroke="#c3b393" stroke-width="2"/><path d="M0 180h390" stroke="#cec6aa" stroke-width="2"/>`;
+  } else if (station.art === "building") {
+    art = `<circle cx="311" cy="36" r="27" fill="#edc391" opacity=".6"/><path d="M43 155V72h45v83M306 155V60h49v95" fill="#b7b9a3"/><path d="M100 170V20h182v150Z" fill="${wall}"/><path d="M98 18h186v10H98z" fill="#a77b5f"/><path d="M114 39h155v98H114z" fill="#ffffff09"/><path d="M125 43h25v30h-25zM176 43h25v30h-25zM227 43h25v30h-25zM125 88h25v28h-25zM227 88h25v28h-25z" fill="#f4dfb8"/><path d="M137 44v29m52-29v29m51-29v29m-103 16v26m103-26v26" stroke="#967358" stroke-width="2"/><path d="M169 170v-41a20 20 0 0 1 40 0v41" fill="#556b55"/><path d="M189 117v53" stroke="#c2ba92" stroke-width="2"/><path d="M109 120h46m66 0h40" stroke="#936e54" stroke-width="3"/><path d="M49 168v-53m3 23c-29-3-33-38-16-46 18-8 37 14 25 30 8 8-2 16-9 16Z" fill="${green}"/><path d="M49 164v-47" stroke="#4d694d" stroke-width="2.5"/><path d="M298 171v-36m1 8c-24-2-30-34-12-41s34 25 12 41Z" fill="${green}"/><path d="M298 168v-44" stroke="#4d694d" stroke-width="2.5"/><path d="M0 174h390v16H0z" fill="#d0ccb4"/><path d="M181 175h40m-43 7h47" stroke="#e5dcc5" stroke-width="4"/><path d="M324 145h24v27h-24z" fill="#ad8767"/><path d="M336 145v-31m0 15c-19-4-17-23-9-20 6 2 10 12 9 20Zm0 3c17-4 20-23 12-22-7 1-13 15-12 22Z" fill="#86956c"/>`;
+  } else {
+    art = `<circle cx="305" cy="35" r="25" fill="#e9ca96" opacity=".6"/><path d="M0 137h390v53H0z" fill="#bac9be"/><path d="M0 147h390m-333 14h83m52 9h123m-275 7h105m-74 8h67" stroke="#dce4d4" stroke-width="2"/><path d="M39 137V48h64v89M279 137V65h58v72" fill="#b3bba6"/><path d="M116 132V34h138v98Z" fill="${wall}"/><path d="m109 34 77-25 74 25Z" fill="#8e9b7d"/><path d="M129 48h25v27h-25zM177 48h25v27h-25zM224 48h17v27h-17zM129 90h25v26h-25zM224 90h17v26h-17z" fill="#f0e6c4"/><path d="M142 49v25m48-25v25m-48 17v25m91-25v25" stroke="#a5a17c" stroke-width="2"/><path d="M174 133v-31a16 16 0 0 1 32 0v31" fill="#5a735b"/><path d="M0 133h390" stroke="#8e9b7d" stroke-width="4"/><path d="M72 136v-32m0 5c-21 2-27-28-11-34s29 23 11 34Z" fill="${green}"/><path d="M72 131v-29M319 136v-34" stroke="#627859" stroke-width="2.5"/><path d="M319 115c-24-2-26-30-10-36 18-7 31 29 10 36Z" fill="${green}"/><path d="M2 131h22m331 0h26" stroke="#e2dfc7" stroke-width="4"/><path d="M268 123h26m-22 0v11m18-11v11" stroke="#a38c6d" stroke-width="3"/>`;
+  }
+  return `<svg viewBox="0 0 390 190" preserveAspectRatio="xMidYMid slice" aria-hidden="true">${frame}${art}</svg>`;
+}
+
+function showToast(message) {
+  const toast = document.querySelector("#toast");
+  clearTimeout(toastTimer);
+  toast.textContent = message;
+  toast.classList.add("visible");
+  toastTimer = setTimeout(() => toast.classList.remove("visible"), 3200);
+}
+
+function renderCalendar() {
+  document.querySelector("#calendar").innerHTML = days.map((day) => {
+    const notOpen = day.index < 2;
+    const selected = day.index === state.selectedDay;
+    const text = notOpen ? "待开放" : day.total ? `${day.total} 间` : "暂无";
+    return `<button class="day${notOpen ? " not-open" : day.total ? "" : " no-rooms"}${selected ? " selected" : ""}" type="button" data-day="${day.index}" aria-pressed="${selected}" aria-label="${day.month}月${day.day}日，${day.weekday}，${notOpen ? "尚未开放" : `${day.total}间示例房源`}${selected ? "，已选择" : ""}"><span class="day-date">${day.month}.${String(day.day).padStart(2, "0")}<span class="day-week">${day.weekday}</span></span><span class="day-count">${notOpen ? "" : '<i class="day-dot"></i>'}${text}</span>${day.index === 0 ? '<span class="day-today">今天</span>' : ""}</button>`;
+  }).join("");
+  const day = days[state.selectedDay];
+  document.querySelector("#search-date-label").innerHTML = `<span>${shortDate(day.date)} — ${shortDate(state.endDate)}</span><span class="stay-length"> · ${stayNights()} 晚</span>`;
+  document.querySelector("#date-jump").setAttribute("aria-label", `计划入住 ${day.date}，离店 ${state.endDate}，共 ${stayNights()} 晚`);
+}
+
+function stationCard(station) {
+  const count = station.counts[state.selectedDay];
+  const saved = state.favorites.has(station.id);
+  return `<article class="station-card"><div class="station-art">${stationArt(station)}<span class="room-badge"><i></i>${count > 0 ? `可选 ${count} 间` : "该日暂无房源"}</span><button class="bookmark${saved ? " saved" : ""}" type="button" data-favorite="${station.id}" aria-pressed="${saved}" aria-label="${saved ? "取消收藏" : "收藏"}${station.name}（示例）">${icon("bookmark")}</button></div><div class="station-body"><div class="station-category"><span data-icon="pin"></span>${station.district}</div><h3>${station.name}<span class="station-example">示例</span></h3><p class="station-address">${station.address}</p><div class="station-tags">${station.tags.map((tag) => `<span class="station-tag">${tag}</span>`).join("")}</div><div class="station-foot"><p><span data-icon="clock"></span>以官方申请结果为准</p><button class="detail-link" type="button" data-detail="${station.id}">查看详情<span data-icon="arrow"></span></button></div></div></article>`;
+}
+
+function emptyState(kind) {
+  const content = {
+    results: { icon: "search", title: "暂无匹配驿站", text: "试试其他日期或区域，也可以建立有房提醒。", button: "重置筛选", action: "data-reset-filters" },
+    notOpen: { icon: "calendar", title: "尚未开放申请", text: "最早可选 10 月 15 日，请切换日期。", button: "查看最早开放日期", action: 'data-day="2"' },
+    favorites: { icon: "bookmark", title: "还没有收藏", text: "点击驿站卡片上的收藏图标，方便下次对比。", button: "去找喜欢的驿站", action: "data-go-find" },
+    monitors: { icon: "bell", title: "还没有提醒", text: "选择区域和日期，建立一份提醒。", button: "建立第一份提醒", action: "data-open-reminder" },
+  }[kind];
+  return `<div class="empty-state"><span class="empty-symbol">${icon(content.icon)}</span><h3>${content.title}</h3><p>${content.text}</p><button class="button button-outline" type="button" ${content.action}>${content.button}${icon("arrow")}</button></div>`;
+}
+
+function renderResults() {
+  const day = days[state.selectedDay];
+  const matches = stations.filter((station) => station.counts[state.selectedDay] > 0 && (!state.district || station.district === state.district) && (!state.keyword || `${station.name}${station.district}${station.address}${station.tags.join("")}`.includes(state.keyword)));
+  if (state.sort === "rooms") matches.sort((a, b) => b.counts[state.selectedDay] - a.counts[state.selectedDay]);
+  if (state.sort === "name") matches.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+  document.querySelector("#results-summary").textContent = `${shortDate(day.date)} — ${shortDate(state.endDate)} · ${stayNights()} 晚 · ${state.district || "上海全市"} · ${matches.length} 个驿站${day.index >= 2 ? `，${matches.reduce((total, station) => total + station.counts[state.selectedDay], 0)} 间房源` : "，尚未开放"}`;
+  document.querySelector("#results").innerHTML = day.index < 2 ? emptyState("notOpen") : matches.length ? matches.map(stationCard).join("") : emptyState("results");
+  document.querySelector("#favorites").innerHTML = state.favorites.size ? stations.filter((station) => state.favorites.has(station.id)).map(stationCard).join("") : emptyState("favorites");
+  document.querySelector("#favorite-count").textContent = state.favorites.size;
+  document.querySelectorAll("[data-district]").forEach((button) => { const active = button.dataset.district === state.district; button.classList.toggle("active", active); button.setAttribute("aria-pressed", active); });
+  hydrateIcons(document.querySelector("#results"));
+  hydrateIcons(document.querySelector("#favorites"));
+}
+
+function renderMonitors() {
+  document.querySelector("#monitors").innerHTML = state.drafts.length ? state.drafts.map((draft, index) => `<article class="monitor-card"><span class="monitor-symbol">${icon("bell")}</span><div class="monitor-content"><h3>${escapeHtml(draft.name)}</h3><div class="monitor-meta"><span>${escapeHtml(draft.district || "上海全市")}</span><span>${escapeHtml(draft.start.slice(5).replace("-", "/"))} — ${escapeHtml(draft.end.slice(5).replace("-", "/"))}</span><span>电子邮件 · 每 15 分钟检查</span></div></div><span class="draft-badge">${draft.verified ? "示例已验证" : "待邮箱验证"} · 未运行</span><button type="button" class="icon-button" data-delete-draft="${index}" aria-label="删除提醒草稿 ${escapeHtml(draft.name)}">${icon("trash")}</button></article>`).join("") : emptyState("monitors");
+  document.querySelector("#management-drafts").classList.toggle("hidden", !state.managementOpen);
+  const badge = document.querySelector("#monitor-count");
+  badge.textContent = state.drafts.length;
+  badge.classList.toggle("hidden", !state.drafts.length);
+}
+
+function switchTab(tab, { scroll = true } = {}) {
+  state.tab = tab;
+  document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("hidden", panel.id !== `${tab}-panel`));
+  document.querySelectorAll("[data-tab]").forEach((button) => {
+    const active = button.dataset.tab === tab;
+    button.classList.toggle("active", active);
+    if (active) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
+  });
+  if (scroll) window.scrollTo({ top: 0, behavior: "auto" });
+}
+
+function openReminder() {
+  document.querySelector("#reminder-district").value = state.district;
+  const start = days[Math.max(2, state.selectedDay)].date;
+  document.querySelector("#reminder-start").value = start;
+  document.querySelector("#reminder-end").value = state.endDate > start ? state.endDate : dateAfter(start, 2);
+  document.querySelector("#reminder-error").textContent = "";
+  document.querySelector("#reminder-dialog").showModal();
+}
+
+function openStation(id) {
+  const station = stations.find((item) => item.id === id);
+  if (!station) return;
+  const container = document.querySelector("#station-dialog-content");
+  container.innerHTML = `<div class="dialog-top"><button class="icon-button close-dialog" type="button" data-close-dialog aria-label="关闭驿站详情">${icon("close")}</button></div><div class="station-art">${stationArt(station)}</div><h2 id="station-dialog-title">${station.name}<span class="station-example">示例</span></h2><p class="station-address">${station.district} · ${station.address}</p><div class="station-tags">${station.tags.map((tag) => `<span class="station-tag">${tag}</span>`).join("")}</div><p class="detail-description">${station.description}</p><div class="draft-notice">${icon("info")}驿站名称、地址及房源均为虚构，未接通真实详情。</div><button class="button official-placeholder" type="button" disabled>官方申请入口 · 设计预览中未连接</button>`;
+  document.querySelector("#station-dialog").showModal();
+}
+
+document.addEventListener("click", (event) => {
+  const tab = event.target.closest("[data-tab]");
+  if (tab) switchTab(tab.dataset.tab);
+  if (event.target.closest("[data-go-find]") || event.target.closest(".brand")) { event.preventDefault(); switchTab("find"); }
+  const dayButton = event.target.closest("[data-day]");
+  if (dayButton) {
+    state.selectedDay = Number(dayButton.dataset.day);
+    state.endDate = dateAfter(days[state.selectedDay].date, 2);
+    renderCalendar();
+    renderResults();
+    const replacement = document.querySelector(`#calendar [data-day="${state.selectedDay}"]`);
+    replacement.focus({ preventScroll: true });
+  }
+  const district = event.target.closest("[data-district]");
+  if (district) { state.district = district.dataset.district; document.querySelector("#district-filter").value = state.district; renderResults(); }
+  const favorite = event.target.closest("[data-favorite]");
+  if (favorite) {
+    const id = favorite.dataset.favorite;
+    const saved = !state.favorites.has(id);
+    if (saved) state.favorites.add(id); else state.favorites.delete(id);
+    renderResults();
+    document.querySelector(`#${state.tab === "favorites" ? "favorites" : "results"} [data-favorite="${id}"]`)?.focus({ preventScroll: true });
+    showToast(saved ? "已收藏此示例驿站，去「我的收藏」看看。" : "已取消收藏此示例驿站。");
+  }
+  const detail = event.target.closest("[data-detail]");
+  if (detail) openStation(detail.dataset.detail);
+  if (event.target.closest("[data-open-reminder]")) openReminder();
+  if (event.target.closest("[data-close-dialog]")) event.target.closest("dialog").close();
+  const remove = event.target.closest("[data-delete-draft]");
+  if (remove) { state.drafts.splice(Number(remove.dataset.deleteDraft), 1); renderMonitors(); showToast("提醒草稿已删除。"); }
+  if (event.target.closest("[data-reset-filters]")) { state.district = ""; state.keyword = ""; state.selectedDay = 2; state.endDate = "2026-10-17"; document.querySelector("#district-filter").value = ""; document.querySelector("#keyword-filter").value = ""; renderCalendar(); renderResults(); }
+});
+
+document.querySelector("#district-filter").addEventListener("change", (event) => { state.district = event.target.value; renderResults(); });
+document.querySelector("#keyword-filter").addEventListener("input", (event) => { state.keyword = event.target.value.trim(); renderResults(); });
+document.querySelector("#sort-filter").addEventListener("change", (event) => { state.sort = event.target.value; renderResults(); });
+document.querySelector("#date-jump").addEventListener("click", () => {
+  document.querySelector("#stay-start").value = days[state.selectedDay].date;
+  document.querySelector("#stay-end").value = state.endDate;
+  document.querySelector("#stay-error").textContent = "";
+  document.querySelector("#stay-dialog").showModal();
+});
+document.querySelector("#stay-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const start = document.querySelector("#stay-start").value;
+  const end = document.querySelector("#stay-end").value;
+  const selected = days.find((day) => day.date === start);
+  if (end <= start) { document.querySelector("#stay-error").textContent = "离店日期需要晚于入住日期。"; document.querySelector("#stay-end").focus(); return; }
+  if (!selected) { document.querySelector("#stay-error").textContent = "请选择示例日历中的入住日期。"; return; }
+  state.selectedDay = selected.index;
+  state.endDate = end;
+  renderCalendar();
+  renderResults();
+  document.querySelector("#stay-dialog").close();
+  showToast("已切换示例入住区间，未发起真实查询。");
+});
+document.querySelector("#search-button").addEventListener("click", () => { renderResults(); document.querySelector(".results-section").scrollIntoView({ behavior: "smooth", block: "start" }); showToast("正在展示示例筛选结果，未发起真实查询。"); });
+document.querySelector("#reminder-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const values = Object.fromEntries(new FormData(event.target));
+  if (values.end <= values.start) { document.querySelector("#reminder-error").textContent = "离店日期需要晚于入住日期。"; document.querySelector("#reminder-end").focus(); return; }
+  state.drafts.push({ ...values, verified: false, name: values.name.trim() || `${values.district || "上海"}的下一站` });
+  document.querySelector("#reminder-dialog").close();
+  renderMonitors();
+  document.querySelector("#verify-email").textContent = values.email;
+  document.querySelector("#verify-dialog").showModal();
+  event.target.reset();
+});
+document.querySelector("#simulate-verify").addEventListener("click", () => {
+  if (state.drafts.length) state.drafts[state.drafts.length - 1].verified = true;
+  state.managementOpen = true;
+  renderMonitors();
+  document.querySelector("#verify-dialog").close();
+  switchTab("monitors");
+  showToast("已模拟邮箱验证。未启动监控，未发送邮件。");
+});
+document.querySelector("#management-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  document.querySelector("#management-message").classList.remove("hidden");
+  showToast("未发送邮件；可点击下方入口模拟专属管理链接。");
+});
+document.querySelector("#open-demo-management").addEventListener("click", () => { state.managementOpen = true; renderMonitors(); showToast("已打开示例管理页，未进行真实邮箱认证。"); });
+document.querySelectorAll("dialog").forEach((dialog) => dialog.addEventListener("click", (event) => { if (event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close(); } }));
+
+hydrateIcons();
+renderCalendar();
+renderResults();
+renderMonitors();
+
+    </script>
+  </body>
+</html>

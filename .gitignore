@@ -3,3 +3,9 @@ node_modules/
 __pycache__/
 *.py[cod]
 .DS_Store
+.env*
+!.env.example
+.dev.vars*
+.wrangler/
+dist/
+coverage/

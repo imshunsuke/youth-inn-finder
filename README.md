@@ -1,72 +1,44 @@
-# 青年驿站房源查询 / Youth Inn Finder
+# 青年驿站 · 上海
 
-查询[上海青年驿站一张图](https://qnyz.shyouth.net/TWYouthInnV2/static/onemap/index.html)的全市可用房源：21 天日历看每天可用房源数与有房驿站，点开直达各驿站官方详情与申请页面。零依赖 Node.js（18+）网页 + REST API。
+查上海青年驿站的余房，按日期和区域找住处。暂时没找到合适的，也可以订个邮件提醒。
 
-> 数据来源为官方公开接口，本项目仅做只读查询，**不代提交申请、不绕过登录/验证码/审核**。
+**[在线使用 ↗](https://youth-inn-finder.imshunsukez.workers.dev)** · [本地开发](docs/development.md) · [API](docs/api.md)
 
-## 功能
+查房不用注册，手机和电脑打开链接就能用。
 
-- 21 天日历（今天起 21 个日历日）：每天全市可用房源数与有房驿站数，点击查看当天各驿站明细、直达官方详情/申请页；
-- 可切换"可供个人申请房源 / 全部房源"和"只统计上架驿站"；
-- REST API：`/api/calendar`、`/api/available`、`/api/nearest`，网页与小程序共用同一服务层；
-- 运行时只用 Node 内置模块，无第三方依赖。
+![青年驿站网站真实截图：欢迎页、房源日历与可选驿站](docs/screenshots/readme-desktop.jpg)
 
-今天和明天标记为"暂未开放"（官方申请页最早可选今天后第 2 天），不会与 0 间房源混淆；官方日历接口未返回的日期显示为 0，不代表全市绝对无房。
+<sub>线上截图（2026-10-13），余房仅代表当时结果；驿站配图是插画。</sub>
 
-## 快速开始
+<details>
+<summary>查看手机界面</summary>
 
-```bash
-npm test    # 10 个测试，假数据源，不需要网络
-npm start   # → http://127.0.0.1:3000
-```
+<p align="center">
+  <img src="docs/screenshots/live-mobile.jpg" width="280" alt="青年驿站网站手机界面真实截图" />
+</p>
 
-开发用 `npm run dev`（文件变更自动重启）。
+</details>
 
-## REST API
+## 找房
 
-### 日历 `GET /api/calendar`
+- 看未来 21 天的日历，选一天查余房，也可以设置入住和离店日期，查连续几晚。
+- 按区域、关键词、房源类型和余房数量筛选；授权定位后，可以按直线距离排序。
+- 感兴趣的驿站可以收藏，收藏保存在当前浏览器。
 
-`?startDate=2026-08-23&days=21&onlyOnShelf=true&houseType=0`
+找到合适的驿站后，点「查看详情」前往官网。申请条件、提交申请和审核结果都请以官网为准。
 
-| 参数 | 说明 |
-| --- | --- |
-| `startDate` | 起始日期，默认今天 |
-| `days` | 1–31，默认 21 |
-| `onlyOnShelf` | `true`/`1` 只统计上架驿站 |
-| `houseType` | `0` 可供个人申请（默认），`1` 全部房源 |
+## 有房提醒
 
-响应含 `stations` 站点级日历（每天 `availableCount` 与 `availabilityStatus`）。
+提醒先小范围试用：**共 5 人，每人最多 2 条**。有邀请码的话，填邮箱并完成验证就能启用。之后用邮件里的链接修改条件、暂停或取消，不用记密码。
 
-### 按日期查可用房源 `GET /api/available`
+单日可以关注全市；连续住几晚，需要先选一个驿站。后台计划每 15 分钟查一次，关掉网页也会继续。有房时发一次邮件，持续有房就不重复发；确认没房、之后又有房了，才会再通知。
 
-`?date=2026-09-06&endDate=2026-09-10&lat=31.2304&lon=121.4737&limit=10`
+## 关于数据
 
-| 参数 | 说明 |
-| --- | --- |
-| `date` | **必填**，入住日期 `YYYY-MM-DD` |
-| `endDate` | 离店日期 |
-| `district` | 如 `浦东新区` |
-| `onlyOnShelf` / `houseType` | 同上 |
-| `minCount` | 最少可用房源数，默认 1 |
-| `lat` + `lon` | 当前位置，必须同时提供 |
-| `limit` | 返回数量，默认 20 |
+数据取自[上海青年驿站](https://qnyz.shyouth.net/TWYouthInnV2/static/onemap/index.html)的公开查询接口。「待确认」只是还没拿到可靠数据，不能当成 0 间；「≥」表示目前查到的数量，可能还有没查全的驿站。查房时也请留意页面上的采样时间。
 
-### 就近驿站 `GET /api/nearest`
+目前先用免费服务试运行，更新和邮件可能延迟，能否长期稳定还需要观察。
 
-`?lat=31.2304&lon=121.4737&limit=10&onlyOnShelf=true`
+## 许可
 
-## 数据来源与使用边界
-
-只读取官网前端实际使用的公开接口：
-
-```text
-GET  https://qnyz.shyouth.net/qnyzApi/hous/housList?userType=0&housType=<0 或 1>
-GET  https://qnyz.shyouth.net/qnyzApi/hous/calendar?id=<驿站ID>
-POST https://qnyz.shyouth.net/qnyzApi/into/idleHouseCnt
-```
-
-不提交入住申请、不绕过登录/验证码/审核；"申请入驻"链接直达官方 `houseDetails` 页面。请控制请求频率，仅供个人学习与查询。
-
-## License
-
-[Apache-2.0](./LICENSE) © 2026 Shunsuke。
+[Apache-2.0](LICENSE) © 2026 Shunsuke

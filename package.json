@@ -1,16 +1,23 @@
 {
   "name": "youth-inn-finder",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Node.js web app + REST API for Shanghai Youth Inn (青年驿站) room availability with a 21-day calendar",
+  "description": "Shanghai Youth Inn search and verified email alerts on Cloudflare Workers and D1",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=18"
+    "node": ">=24.15.0"
   },
   "scripts": {
-    "start": "node server.mjs",
-    "dev": "node --watch server.mjs",
-    "test": "node --test test/*.test.mjs"
+    "start": "node --env-file-if-exists=.env.local server.mjs",
+    "dev": "node --env-file-if-exists=.env.local --watch server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "node scripts/check.mjs",
+    "invites": "node scripts/invitations.mjs",
+    "preview:cloud": "wrangler dev",
+    "deploy": "node --env-file-if-exists=.env.local scripts/deploy.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "4.149.0"
   }
 }
