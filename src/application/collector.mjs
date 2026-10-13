@@ -128,8 +128,9 @@ export function createCollector({ db, clock = () => new Date(), fetchImpl = (...
       });
       const remaining = budget - requestsUsed;
       const dueIntervals = await store.dueIntervalJobs(remaining);
-      // Reserve up to one third for interval work so a large catalog cannot starve it.
-      const intervalSlots = Math.min(dueIntervals.length, dueCalendars.length ? Math.max(1, Math.floor(remaining / 3)) : remaining);
+      // Share the slice evenly while both kinds are due. At one third, a cold
+      // 90-station range can expire before its last stations are collected.
+      const intervalSlots = Math.min(dueIntervals.length, dueCalendars.length ? Math.max(1, Math.floor(remaining / 2)) : remaining);
       const calendarSlots = Math.min(dueCalendars.length, Math.max(0, remaining - intervalSlots));
       const intervalCount = Math.min(dueIntervals.length, remaining - calendarSlots);
       const selectedCalendars = dueCalendars.slice(0, calendarSlots);

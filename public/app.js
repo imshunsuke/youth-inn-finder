@@ -1,6 +1,7 @@
 import { request, apiPath, isPending } from "./lib/api.mjs";
 import { icon, hydrateIcons, escapeHtml as esc, todayInShanghai, addDays, validDate, shortDate, weekday, sampleTime, safeOfficialUrl, distanceKm, stationArt, readFavorites, writeFavorites, toast } from "./lib/ui.mjs";
 import { setupReminders } from "./lib/reminders.mjs";
+import { intervalFeedback, intervalRetry } from "./lib/interval-status.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const today = todayInShanghai();
@@ -92,9 +93,9 @@ function renderResults() {
   $("#results").setAttribute("aria-busy", String(Boolean(source.loading)));
   if (items.length) $("#results").innerHTML = items.map((station) => stationCard(station)).join("");
   else if (source.status === "not-open") $("#results").innerHTML = emptyState("尚未开放申请", "请换一个日期。开放时间以官方申请页面为准。", "filters");
-  else if (source.status === "pending") $("#results").innerHTML = emptyState("正在准备区间房源", "该入住区间尚在采集，请稍后重试。");
   else if (source.loading) $("#results").innerHTML = '<div class="empty-state loading-state"><span class="loading-dot"></span><p>正在查询房源…</p></div>';
   else if (source.error) $("#results").innerHTML = emptyState("暂时无法查询", source.error);
+  else if (source.status === "pending") { const feedback = intervalFeedback(source.meta); $("#results").innerHTML = emptyState(feedback.title, feedback.description); }
   else if (partial || !state.calendar) $("#results").innerHTML = emptyState("部分房源尚待确认", "暂未确认有房，不代表没有房源，请稍后重试。");
   else $("#results").innerHTML = emptyState("暂无匹配房源", "试试其他日期或区域，也可以建立有房提醒。", state.district || state.q || state.minCount > 1 ? "filters" : "reminder");
   const currentById = new Map(allStations().map((station) => [station.id, station])), confirmed = new Map(source.items.map((station) => [station.id, station]));
@@ -104,7 +105,7 @@ function renderResults() {
   if (source.loading) pieces.push("正在更新");
   else if (source.meta?.pending && source.status !== "pending") pieces.push("仍在更新");
   if (source.error) pieces.push(`${source.error}${items.length ? "，保留上次结果" : ""}`);
-  else if (source.status === "pending") pieces.push(items.length ? `区间仍在更新 · ${source.stale ? "保留上次结果" : "显示已确认房源"}` : "区间数据采集中，请稍后重试");
+  else if (source.status === "pending") pieces.push(intervalFeedback(source.meta).summary);
   else if (partial && source.meta) pieces.push(source.total > 0 ? `部分数据 · ${Math.max(0, source.total - source.unknown)}/${source.total} 个驿站已更新` : "部分数据待确认");
   else if (source.status === "not-open") pieces.push("尚未开放，具体以官方页面为准");
   if (state.endDate && state.calendarError) pieces.push("日历暂未更新");
@@ -149,10 +150,10 @@ async function loadInterval({ force = false } = {}) {
     const result = await request(apiPath("/api/available", { date: state.date, endDate: state.endDate, district: state.district, q: state.q, houseType: state.houseType, onlyOnShelf: state.onlyOnShelf, minCount: 1, limit: 200, sort: "availability" }), { signal: intervalController.signal });
     if (sequence !== intervalSequence || key !== intervalKey()) return;
     const pending = isPending(result);
-    if (pending && (!Array.isArray(result.payload?.data) || !result.payload.data.length)) { state.interval = { key, payload: cached?.payload || result.payload, pending: true, stale: Boolean(cached?.payload?.data?.length) }; return; }
     if (!Array.isArray(result.payload?.data)) throw new Error("区间房源数据格式异常，请稍后重试");
-    state.interval = { key, payload: result.payload, pending }; intervalCache.set(key, { at: Date.now(), payload: result.payload, pending });
-  } catch (error) { if (error.name === "AbortError" || sequence !== intervalSequence) return; state.interval = { key, payload: cached?.payload || null, error: error.status === 503 ? "区间数据正在准备，请稍后重试" : error.message }; }
+    state.interval = { key, payload: result.payload, pending, ...intervalRetry({ status: result.status, retryAfter: result.retryAfter, refreshAfterMs: result.payload.meta?.refreshAfterMs }) };
+    intervalCache.set(key, { at: Date.now(), payload: result.payload, pending });
+  } catch (error) { if (error.name === "AbortError" || sequence !== intervalSequence) return; state.interval = { key, payload: cached?.payload || null, error: error.message, ...intervalRetry(error) }; }
   finally { if (sequence === intervalSequence) { if (state.interval) state.interval.loading = false; render(); } }
 }
 function findStation(id) { return allStations().find((station) => station.id === id) || displaySource().items.find((station) => station.id === id) || state.favorites.get(id); }
@@ -229,7 +230,7 @@ function autoUpdate() {
   if (state.endDate && !intervalTimer) {
     const key = intervalKey(), current = state.interval?.key === key ? state.interval : null;
     const sinceAttempt = key === lastIntervalAttemptKey ? Date.now() - lastIntervalAttemptAt : Infinity;
-    if (!current?.loading && sinceAttempt >= 60_000 && needsSnapshotUpdate(current?.payload, current?.error, current?.pending)) loadInterval({ force: true });
+    if (!current?.loading && current?.retryable !== false && Date.now() >= (current?.retryAt || 0) && sinceAttempt >= 60_000 && needsSnapshotUpdate(current?.payload, current?.error, current?.pending)) loadInterval({ force: true });
   }
 }
 function scheduleAutoUpdate() {

@@ -79,8 +79,10 @@ export async function handleQueryRequest(request, { db, clock = () => new Date()
       const queued = await store.enqueueIntervalQuery({ ...input, date: input.date ?? todayInShanghai(clock) }, {
         ttlMs: intervalQueueTtlMs, maxJobs: maxIntervalJobs,
         catalogMaxAgeMs: freshness.catalogMaxAgeMs ?? DEFAULT_SNAPSHOT_FRESHNESS.catalogMaxAgeMs,
+        intervalMaxAgeMs: freshness.intervalMaxAgeMs ?? DEFAULT_SNAPSHOT_FRESHNESS.intervalMaxAgeMs,
+        observations: diagnostics.observations,
       });
-      result.meta.collection = { status: queued.accepted > 0 ? "queued" : "capacity-limited", ...queued };
+      result.meta.collection = { status: queued.capacityLimited ? "capacity-limited" : queued.accepted > 0 ? "queued" : "ready", ...queued };
     }
     return jsonResponse(result, 200, result.meta.pending ? { "Retry-After": "60" } : {});
   } catch (error) {
