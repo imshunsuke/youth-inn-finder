@@ -12,11 +12,13 @@ test("health distinguishes configuration from delivery, applies security headers
   const response = await app(request("/api/health"));
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true, service: "youth-inn-finder", version: "1.0.0",
-    now: clock().toISOString(), mailConfigured: false, monitoringEnabled: false });
+    now: clock().toISOString(), mailConfigured: false, monitoringEnabled: false, invitationRequired: false });
   assert.equal(response.headers.get("access-control-allow-origin"), null);
   assert.equal(response.headers.get("referrer-policy"), "no-referrer");
   assert.match(response.headers.get("content-security-policy"), /connect-src 'self'/);
   assert.equal((await app(request("/api/health", { method: "HEAD" }))).body, null);
+  const invitationHealth = await createApp({ clock, env: { INVITATION_REQUIRED: "true" } })(request("/api/health"));
+  assert.equal((await invitationHealth.json()).invitationRequired, true);
 });
 
 test("cross-origin writes are rejected before routing while public reads remain available", async () => {

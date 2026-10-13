@@ -5,24 +5,35 @@ const $ = (selector) => document.querySelector(selector);
 const validToken = (token) => typeof token === "string" && /^[A-Za-z0-9_-]{16,1024}$/.test(token);
 
 export function setupReminders({ getConditions, getStations, switchTab }) {
-  let mailConfigured = false, healthCheckedAt = 0, healthBusy = false;
+  let mailConfigured = false, invitationRequired = false, healthCheckedAt = 0, healthBusy = false;
   let verificationToken = null, managementToken = null, records = [], listLoading = false, listSequence = 0;
   let formBusy = false, accessBusy = false, verificationBusy = false;
   let editSession = null, formGeneration = 0, mutationBusy = false, listReloadQueued = false;
 
   function updateMailState() {
+    const inviteNeeded = invitationRequired && !editSession && !managementToken;
+    const memberCreate = invitationRequired && !editSession && Boolean(managementToken);
+    $("#reminder-invite-field").classList.toggle("hidden", !inviteNeeded);
+    $("#reminder-invite-note").classList.toggle("hidden", !invitationRequired || Boolean(editSession));
+    $("#reminder-invite-code").required = inviteNeeded;
+    if (!inviteNeeded) $("#reminder-invite-code").value = "";
     $("#mail-status").textContent = healthBusy ? "正在检查邮件服务…" : mailConfigured ? "" : "邮件服务暂不可用，请稍后重试。";
     $("#mail-status").classList.toggle("hidden", Boolean(editSession) || (mailConfigured && !healthBusy));
     $("#retry-mail-health").classList.toggle("hidden", Boolean(editSession) || healthBusy || mailConfigured);
     $("#management-health-retry").classList.toggle("hidden", healthBusy || mailConfigured);
     $("#reminder-submit").disabled = formBusy || (editSession ? editSession.token !== managementToken : !mailConfigured || healthBusy);
-    $("#reminder-form").querySelectorAll("input, select").forEach((field) => { field.disabled = formBusy || (Boolean(editSession) && field.id === "reminder-email"); });
+    if (!editSession) {
+      $("#reminder-submit").innerHTML = memberCreate ? "启用提醒" : `${icon("mail")}发送验证邮件`;
+      $("#reminder-description").textContent = memberCreate ? "符合条件时发送邮件提醒，可随时通过管理链接取消。" : "有房时发邮件，通过邮件链接随时取消。";
+      $("#reminder-footer-note").textContent = memberCreate ? "每 15 分钟检查，可在管理列表中暂停或取消。" : "验证邮箱后启用，每 15 分钟检查一次。";
+    }
+    $("#reminder-form").querySelectorAll("input, select").forEach((field) => { field.disabled = formBusy || (Boolean(editSession) && field.id === "reminder-email") || (field.id === "reminder-invite-code" && !inviteNeeded); });
     $("#management-submit").disabled = accessBusy || !mailConfigured || healthBusy;
   }
   async function checkHealth({ force = false } = {}) {
     if (healthBusy || (!force && Date.now() - healthCheckedAt < 60_000)) return;
     healthBusy = true; updateMailState();
-    try { const { payload } = await request("/api/health", { timeoutMs: 10_000 }); mailConfigured = payload?.mailConfigured === true || payload?.data?.mailConfigured === true; healthCheckedAt = Date.now(); }
+    try { const { payload } = await request("/api/health", { timeoutMs: 10_000 }); mailConfigured = payload?.mailConfigured === true || payload?.data?.mailConfigured === true; invitationRequired = payload?.invitationRequired === true || payload?.data?.invitationRequired === true; healthCheckedAt = Date.now(); }
     catch { mailConfigured = false; }
     finally { healthBusy = false; updateMailState(); }
     if (!mailConfigured && !managementToken && !verificationToken) $("#management-message").textContent = "邮件服务暂不可用，请稍后再试。";
@@ -37,13 +48,26 @@ export function setupReminders({ getConditions, getStations, switchTab }) {
     const empty = select.querySelector('option[value=""]');
     if (empty) { empty.disabled = continuous; empty.textContent = continuous ? "请选择一个驿站" : "该区域所有驿站"; }
   }
-  function populateStationOptions(selected = "") {
+  function populateDistrictOptions(selected, stations = getStations()) {
+    const districts = [...new Set(stations.map((station) => station.district).filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh-CN"));
+    if (selected && !districts.includes(selected)) districts.push(selected);
+    $("#reminder-district").innerHTML = '<option value="">上海全市</option>' + districts.map((district) => `<option value="${esc(district)}">${esc(district)}</option>`).join("");
+    $("#reminder-district").value = selected;
+  }
+  function populateStationOptions(selected = "", { preserveSelected = false, label = "" } = {}) {
     const district = $("#reminder-district").value;
     const candidates = getStations().filter((station) => !district || station.district === district);
-    const retained = selected && editSession?.conditions.stationId === selected && !candidates.some((station) => station.id === selected);
-    $("#reminder-station").innerHTML = '<option value="">该区域所有驿站</option>' + candidates.map((station) => `<option value="${esc(station.id)}">${esc(station.name)}</option>`).join("") + (retained ? `<option value="${esc(selected)}">已选驿站（当前列表未显示）</option>` : "");
+    const retained = selected && (preserveSelected || editSession?.conditions.stationId === selected) && !candidates.some((station) => station.id === selected);
+    $("#reminder-station").innerHTML = '<option value="">该区域所有驿站</option>' + candidates.map((station) => `<option value="${esc(station.id)}">${esc(station.name)}</option>`).join("") + (retained ? `<option value="${esc(selected)}">${esc(label || "已选驿站（当前列表未显示）")}</option>` : "");
     $("#reminder-station").value = retained || candidates.some((station) => station.id === selected) ? selected : "";
     syncStayConditions();
+  }
+  function refreshStations() {
+    if (!$("#reminder-dialog").open || formBusy) return;
+    const district = $("#reminder-district").value, station = $("#reminder-station");
+    const selected = station.value, label = station.selectedOptions?.[0]?.textContent || "";
+    populateDistrictOptions(district);
+    populateStationOptions(selected, { preserveSelected: true, label });
   }
   function open(stationId = "") {
     if (formBusy || mutationBusy) { toast("正在保存提醒，请稍候。"); return; }
@@ -62,11 +86,8 @@ export function setupReminders({ getConditions, getStations, switchTab }) {
   function showForm(conditions, stationId) {
     const stations = getStations();
     const station = stations.find((item) => item.id === stationId);
-    const districts = [...new Set(stations.map((item) => item.district).filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh-CN"));
     const selectedDistrict = editSession ? conditions.district || "" : station?.district || conditions.district || "";
-    if (selectedDistrict && !districts.includes(selectedDistrict)) districts.push(selectedDistrict);
-    $("#reminder-district").innerHTML = '<option value="">上海全市</option>' + districts.map((district) => `<option value="${esc(district)}">${esc(district)}</option>`).join("");
-    $("#reminder-district").value = selectedDistrict;
+    populateDistrictOptions(selectedDistrict, stations);
     populateStationOptions(stationId);
     $("#reminder-start").value = conditions.date;
     $("#reminder-start").min = todayInShanghai();
@@ -80,6 +101,7 @@ export function setupReminders({ getConditions, getStations, switchTab }) {
     $("#reminder-email-field").classList.toggle("hidden", editing);
     $("#reminder-email").disabled = editing;
     $("#reminder-email").required = !editing;
+    $("#reminder-invite-code").value = "";
     $("#reminder-submit").innerHTML = editing ? "保存修改" : `${icon("mail")}发送验证邮件`;
     $("#reminder-footer-note").textContent = editing ? "原有暂停或启用状态保持不变。" : "验证邮箱后启用，每 15 分钟检查一次。";
     $("#reminder-error").textContent = ""; $("#reminder-message").textContent = "";
@@ -92,18 +114,25 @@ export function setupReminders({ getConditions, getStations, switchTab }) {
   $("#reminder-start").addEventListener("change", () => { if (validDate($("#reminder-start").value)) $("#reminder-end").min = addDays($("#reminder-start").value, 1); syncStayConditions(); });
   $("#reminder-end").addEventListener("input", syncStayConditions);
   $("#reminder-end").addEventListener("change", syncStayConditions);
+  $("#reminder-dialog").addEventListener("close", () => { $("#reminder-invite-code").value = ""; });
   $("#reminder-form").addEventListener("submit", async (event) => {
     event.preventDefault(); if (formBusy || mutationBusy || (!editSession && !mailConfigured)) return;
     const editing = editSession, generation = formGeneration;
+    const creationToken = editing ? null : managementToken;
+    const memberCreation = !editing && invitationRequired && Boolean(creationToken);
+    const requiresInvite = !editing && invitationRequired && !creationToken;
     if (editing && editing.token !== managementToken) { $("#reminder-error").textContent = "管理链接已变更，请重新打开提醒。"; return; }
     const values = Object.fromEntries(new FormData(event.target));
+    const inviteCode = requiresInvite ? String(values.inviteCode || "").trim() : "";
+    if (requiresInvite && !inviteCode) { $("#reminder-error").textContent = "请输入邀请码。"; $("#reminder-invite-code").focus(); return; }
     if (values.endDate && !values.stationId) { $("#reminder-error").textContent = "连续入住提醒请选择一个驿站。"; $("#reminder-station").focus(); return; }
     const minCount = Number(values.minCount);
     if (!validDate(values.date) || (values.endDate && (!validDate(values.endDate) || values.endDate <= values.date)) || !Number.isInteger(minCount) || minCount < 1 || minCount > 10000) { $("#reminder-error").textContent = "请检查入住、离店日期及房源数量。"; return; }
     const current = editing ? editing.conditions : getConditions();
     const conditions = { ...(editing ? current : {}), date: values.date, endDate: values.endDate || null, district: values.district || "", stationId: values.stationId || "", houseType: current.houseType, onlyOnShelf: current.onlyOnShelf, minCount };
     formBusy = true; $("#reminder-error").textContent = ""; $("#reminder-message").textContent = "正在提交…"; updateMailState();
-    if (editing) mutationBusy = true;
+    if (editing || memberCreation) mutationBusy = true;
+    if (memberCreation && listLoading) { listSequence++; listLoading = false; listReloadQueued = true; }
     try {
       if (editing) {
         const { payload } = await request(`/api/reminders/${encodeURIComponent(editing.id)}`, { method: "PATCH", token: editing.token, body: { conditions } });
@@ -112,15 +141,26 @@ export function setupReminders({ getConditions, getStations, switchTab }) {
         $("#reminder-dialog").close(); editSession = null; formGeneration++;
         toast("提醒条件已修改。"); mutationBusy = false; await loadRecords();
       } else {
-        await request("/api/reminders", { method: "POST", body: { email: values.email.trim(), conditions } });
-        if (generation === formGeneration) $("#reminder-message").textContent = "如果此地址可用，你会收到验证邮件。请检查收件箱及垃圾邮件，点击邮件链接后启用提醒。";
+        const { payload } = await request("/api/reminders", { method: "POST", ...(creationToken ? { token: creationToken } : {}), body: { email: values.email.trim(), conditions, ...(requiresInvite ? { inviteCode } : {}) } });
+        if (generation !== formGeneration || (creationToken && creationToken !== managementToken)) return;
+        $("#reminder-invite-code").value = "";
+        const created = payload?.data;
+        if (creationToken && created && typeof created.id === "string" && created.conditions && typeof created.status === "string") {
+          records = records.some((record) => record.id === created.id) ? records.map((record) => record.id === created.id ? created : record) : [created, ...records];
+          renderRecords(); $("#reminder-dialog").close(); formGeneration++; switchTab("monitors");
+          const message = typeof payload.message === "string" ? payload.message.trim().slice(0, 300) : "";
+          toast(created.status === "paused" ? "这份提醒当前已暂停。" : message || (created.status === "active" ? "提醒已启用。" : "提醒已保存。"));
+          mutationBusy = false; await loadRecords();
+        } else {
+          $("#reminder-message").textContent = "如果此地址可用，你会收到验证邮件。请检查收件箱及垃圾邮件，点击邮件链接后启用提醒。";
+        }
       }
     } catch (error) {
       if (generation === formGeneration) {
         $("#reminder-message").textContent = "";
         $("#reminder-error").textContent = editing ? [401, 403].includes(error.status) ? "管理链接已失效，请重新获取链接。" : error.message : error.code === "REMINDER_CAPACITY" ? "提醒名额暂满，请稍后再试。查房仍可正常使用。" : error.status === 503 ? "邮件服务暂不可用，未能提交，请稍后重试。" : error.message;
       }
-    } finally { formBusy = false; if (editing) mutationBusy = false; updateMailState(); if (listReloadQueued) loadRecords(); }
+    } finally { formBusy = false; if (editing || memberCreation) mutationBusy = false; updateMailState(); if (listReloadQueued) loadRecords(); }
   });
 
   $("#management-form").addEventListener("submit", async (event) => {
@@ -187,7 +227,7 @@ export function setupReminders({ getConditions, getStations, switchTab }) {
       if (verificationToken !== verifying) return;
       verificationToken = null; $("#verification-status").textContent = "邮箱已验证，提醒已启用。"; $("#confirm-verification").classList.add("hidden");
       const token = payload?.managementToken || payload?.data?.managementToken;
-      if (validToken(token)) { managementToken = token; records = []; listLoading = false; listSequence++; await loadRecords(); }
+      if (validToken(token)) { managementToken = token; updateMailState(); records = []; listLoading = false; listSequence++; await loadRecords(); }
     } catch (error) { $("#verification-status").textContent = error.message; $("#confirm-verification").disabled = false; }
     finally { verificationBusy = false; }
   });
@@ -203,9 +243,9 @@ export function setupReminders({ getConditions, getStations, switchTab }) {
       verificationToken = verify; $("#verification-box").classList.remove("hidden"); $("#confirm-verification").classList.remove("hidden"); $("#confirm-verification").disabled = false; $("#verification-status").textContent = "";
     } else if (manage) {
       if (!validToken(manage)) { $("#management-message").textContent = "管理链接无效，请重新获取。"; return; }
-      managementToken = manage; records = []; listLoading = false; listSequence++; $("#monitors").innerHTML = ""; $("#verification-box").classList.add("hidden"); loadRecords();
+      managementToken = manage; updateMailState(); records = []; listLoading = false; listSequence++; $("#monitors").innerHTML = ""; $("#verification-box").classList.add("hidden"); loadRecords();
     }
   }
   function initialize() { checkHealth(); consumeFragment(); window.addEventListener("hashchange", consumeFragment); }
-  return { open, initialize };
+  return { open, initialize, refreshStations };
 }

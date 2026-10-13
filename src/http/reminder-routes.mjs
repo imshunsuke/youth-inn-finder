@@ -51,8 +51,8 @@ export async function handleReminderRequest(request, { db, store: injectedStore,
     const store = injectedStore ?? createReminderStore(db, { clock });
     const service = createReminderService({ store, env, clock });
     const mail = injectedMail ?? createBrevoMailer({ env });
-    const context = { ip: request.headers.get('cf-connecting-ip') || 'local' };
     const bearer = request.headers.get('authorization')?.match(/^Bearer ([A-Za-z0-9_-]+)$/i)?.[1];
+    const context = { ip: request.headers.get('cf-connecting-ip') || 'local', token: bearer };
     const path = url.pathname;
     let result;
     if (path === '/api/reminders' && request.method === 'POST') {

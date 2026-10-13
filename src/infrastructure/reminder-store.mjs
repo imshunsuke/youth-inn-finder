@@ -40,29 +40,100 @@ export function createReminderStore(db, { clock = () => new Date() } = {}) {
         OR (status='pending' AND updated_at>?)`).bind(cutoff).first();
       return count.count < limit;
     },
-    async createPending(reminder, token, mail, maxReminders = 3, totalLimit = 30) {
+    async invitationByCode(digest) {
+      return db.prepare(`SELECT * FROM reminder_invitations WHERE code_digest=?`).bind(digest).first();
+    },
+    async invitationForOwner(email) {
+      return db.prepare(`SELECT * FROM reminder_invitations WHERE email=? AND state='bound'`).bind(email).first();
+    },
+    async createPending(reminder, token, mail, maxReminders = 3, totalLimit = 30,
+      { invitationRequired = false, invitationId = null, codeDigest = null, owner = false } = {}) {
+      if (invitationRequired) { maxReminders = Math.min(maxReminders, 2); totalLimit = Math.min(totalLimit, 10); }
       const cutoff = new Date(Date.parse(token.created_at) - VERIFY_TOKEN_MS).toISOString();
       const live = `(status IN ('active','paused') OR (status='pending' AND updated_at>?))`;
+      const statements = [];
+      const invitationGate = invitationRequired ? `EXISTS(SELECT 1 FROM reminder_invitations WHERE id=? AND email=?
+        AND ((?=1 AND state='bound') OR (?=0 AND state='reserved' AND reservation_until>? AND code_digest=?)))` : '1';
+      const invitationValues = invitationRequired ? [invitationId, reminder.email, owner ? 1 : 0, owner ? 1 : 0,
+        token.created_at, codeDigest] : [];
+      if (invitationRequired) {
+        statements.push(db.prepare(`UPDATE reminder_invitations SET state='available',email=NULL,reservation_until=NULL
+          WHERE state='reserved' AND reservation_until<=?`).bind(token.created_at));
+        if (!owner) statements.push(db.prepare(`UPDATE reminder_invitations SET state='reserved',email=?,reservation_until=?
+          WHERE id=? AND code_digest=? AND code_expires_at>? AND state IN ('available','reserved')
+          AND (email IS NULL OR email=?) AND NOT EXISTS(SELECT 1 FROM reminder_invitations WHERE email=? AND id<>?)
+          AND ((SELECT COUNT(*) FROM reminders WHERE email=? AND ${live}) < ?
+            OR EXISTS(SELECT 1 FROM reminders WHERE id=? AND email=? AND status='pending' AND invitation_id=?))
+          AND ((SELECT COUNT(*) FROM reminders WHERE ${live}) < ?
+            OR EXISTS(SELECT 1 FROM reminders WHERE id=? AND status='pending' AND updated_at>?))`)
+          .bind(reminder.email, token.expires_at, invitationId, codeDigest, token.created_at,
+            reminder.email, reminder.email, invitationId, reminder.email, cutoff, maxReminders,
+            reminder.id, reminder.email, invitationId, cutoff, totalLimit, reminder.id, cutoff));
+      }
+      const duplicateGate = invitationRequired ? ' AND invitation_id=?' : '';
+      const duplicateValues = invitationRequired ? [invitationId] : [];
+      const personalRenewalGate = invitationRequired
+        ? ` AND (SELECT COUNT(*) FROM reminders WHERE email=? AND ${live}) < ?` : '';
       const exists = `EXISTS(SELECT 1 FROM reminders WHERE id=? AND email=? AND status='pending' AND conditions_json=?
-        AND (updated_at>? OR (SELECT COUNT(*) FROM reminders WHERE ${live}) < ?))`;
-      const values = [reminder.id, reminder.email, reminder.conditions_json, cutoff,
-        cutoff, totalLimit];
-      return db.batch([
-        db.prepare(`INSERT OR IGNORE INTO reminders(id,email,conditions_json,status,condition_version,created_at,updated_at)
-          SELECT ?,?,?,'pending',1,?,? WHERE
-          (SELECT COUNT(*) FROM reminders WHERE email=? AND status IN ('pending','active','paused')) < ?
-          AND (SELECT COUNT(*) FROM reminders WHERE ${live}) < ?
-          AND NOT EXISTS(SELECT 1 FROM reminders WHERE email=? AND conditions_json=? AND status IN ('pending','active','paused'))`)
-          .bind(reminder.id, reminder.email, reminder.conditions_json, reminder.created_at, reminder.updated_at,
-            reminder.email, maxReminders, cutoff, totalLimit, reminder.email, reminder.conditions_json),
-        tokenStatement(db, token, exists, values),
-        db.prepare(`UPDATE reminders SET updated_at=? WHERE id=? AND status='pending' AND EXISTS(SELECT 1 FROM reminder_tokens WHERE digest=?)`)
-          .bind(token.created_at, reminder.id, token.digest),
-        outboxStatement(db, mail, `EXISTS(SELECT 1 FROM reminder_tokens WHERE digest=?)`, [token.digest]),
-      ]);
+        ${duplicateGate} AND (updated_at>? OR ((SELECT COUNT(*) FROM reminders WHERE ${live}) < ? ${personalRenewalGate}))) AND ${invitationGate}`;
+      const values = [reminder.id, reminder.email, reminder.conditions_json, ...duplicateValues, cutoff,
+        cutoff, totalLimit, ...(invitationRequired ? [reminder.email, cutoff, maxReminders] : []), ...invitationValues];
+      statements.push(db.prepare(`INSERT OR IGNORE INTO reminders
+        (id,email,conditions_json,status,condition_version,created_at,updated_at,invitation_id)
+        SELECT ?,?,?,'pending',1,?,?,? WHERE
+        (SELECT COUNT(*) FROM reminders WHERE email=? AND ${invitationRequired ? live : "status IN ('pending','active','paused')"}) < ?
+        AND (SELECT COUNT(*) FROM reminders WHERE ${live}) < ?
+        AND NOT EXISTS(SELECT 1 FROM reminders WHERE email=? AND conditions_json=? AND status IN ('pending','active','paused') ${duplicateGate})
+        AND ${invitationGate}`)
+        .bind(reminder.id, reminder.email, reminder.conditions_json, reminder.created_at, reminder.updated_at, invitationId,
+          reminder.email, ...(invitationRequired ? [cutoff] : []), maxReminders, cutoff, totalLimit,
+          reminder.email, reminder.conditions_json, ...duplicateValues, ...invitationValues));
+      const tokenIndex = statements.length;
+      statements.push(tokenStatement(db, token, exists, values));
+      statements.push(db.prepare(`UPDATE reminders SET updated_at=? WHERE id=? AND status='pending'
+        AND EXISTS(SELECT 1 FROM reminder_tokens WHERE digest=?)`).bind(token.created_at, reminder.id, token.digest));
+      statements.push(outboxStatement(db, mail, `EXISTS(SELECT 1 FROM reminder_tokens WHERE digest=?)`, [token.digest]));
+      const results = await db.batch(statements);
+      return { queued: changes(results[tokenIndex]) === 1, results };
     },
-    async enqueueAccess(token, mail) {
-      const valid = `EXISTS(SELECT 1 FROM reminders WHERE email=? AND verified_at IS NOT NULL AND status IN ('active','paused'))`;
+    async ownerUsage(email, timestamp = current()) {
+      const cutoff = new Date(Date.parse(timestamp) - VERIFY_TOKEN_MS).toISOString();
+      return (await db.prepare(`SELECT COUNT(*) AS count FROM reminders WHERE email=? AND
+        (status IN ('active','paused') OR (status='pending' AND updated_at>?))`).bind(email, cutoff).first()).count;
+    },
+    async createForOwner(reminder, invitationId, timestamp = current()) {
+      const cutoff = new Date(Date.parse(timestamp) - VERIFY_TOKEN_MS).toISOString();
+      const live = `(status IN ('active','paused') OR (status='pending' AND updated_at>?))`;
+      const gate = `EXISTS(SELECT 1 FROM reminder_invitations WHERE id=? AND email=? AND state='bound')
+        AND (SELECT COUNT(*) FROM reminders WHERE email=? AND id<>? AND ${live}) < 2
+        AND (SELECT COUNT(*) FROM reminders WHERE id<>? AND ${live}) < 10`;
+      const guard = [invitationId, reminder.email, reminder.email, reminder.id, cutoff, reminder.id, cutoff];
+      await db.batch([
+        db.prepare(`UPDATE reminders SET status='active',verified_at=?,updated_at=?,next_check_at=?,last_match=NULL,
+          condition_version=condition_version+1,match_cycle=0 WHERE id=? AND email=? AND status='pending'
+          AND conditions_json=? AND invitation_id=? AND ${gate}`)
+          .bind(timestamp, timestamp, timestamp, reminder.id, reminder.email, reminder.conditions_json, invitationId, ...guard),
+        db.prepare(`INSERT OR IGNORE INTO reminders
+          (id,email,conditions_json,status,condition_version,created_at,updated_at,verified_at,next_check_at,invitation_id)
+          SELECT ?,?,?,'active',1,?,?,?,?,? WHERE ${gate}
+          AND NOT EXISTS(SELECT 1 FROM reminders WHERE email=? AND invitation_id=? AND conditions_json=?
+            AND status IN ('pending','active','paused'))`)
+          .bind(reminder.id, reminder.email, reminder.conditions_json, timestamp, timestamp, timestamp, timestamp, invitationId,
+            ...guard, reminder.email, invitationId, reminder.conditions_json),
+        db.prepare(`DELETE FROM reminder_tokens WHERE purpose='verify' AND reminder_id=? AND email=?
+          AND EXISTS(SELECT 1 FROM reminders WHERE id=? AND email=? AND invitation_id=? AND status='active' AND updated_at=?)`)
+          .bind(reminder.id, reminder.email, reminder.id, reminder.email, invitationId, timestamp),
+        db.prepare(`UPDATE reminder_outbox SET status='cancelled',payload_ciphertext=NULL,lease_id=NULL,lease_until=NULL
+          WHERE reminder_id=? AND recipient_email=? AND status IN ('pending','sending')
+          AND EXISTS(SELECT 1 FROM reminders WHERE id=? AND email=? AND invitation_id=? AND status='active' AND updated_at=?)`)
+          .bind(reminder.id, reminder.email, reminder.id, reminder.email, invitationId, timestamp),
+      ]);
+      return db.prepare(`SELECT * FROM reminders WHERE email=? AND invitation_id=? AND conditions_json=?
+        AND status IN ('active','paused') ORDER BY created_at DESC LIMIT 1`).bind(reminder.email, invitationId, reminder.conditions_json).first();
+    },
+    async enqueueAccess(token, mail, { invitationRequired = false } = {}) {
+      const valid = invitationRequired ? `EXISTS(SELECT 1 FROM reminder_invitations WHERE email=? AND state='bound')`
+        : `EXISTS(SELECT 1 FROM reminders WHERE email=? AND verified_at IS NOT NULL AND status IN ('active','paused'))`;
       return db.batch([tokenStatement(db, token, valid, [token.email]),
         outboxStatement(db, mail, `EXISTS(SELECT 1 FROM reminder_tokens WHERE digest=?)`, [token.digest])]);
     },
@@ -70,23 +141,32 @@ export function createReminderStore(db, { clock = () => new Date() } = {}) {
       return db.prepare(`SELECT * FROM reminder_tokens WHERE digest=? AND purpose=? AND consumed_at IS NULL AND expires_at>?`)
         .bind(digest, purpose, timestamp).first();
     },
-    async activate(verification, management, timestamp = current()) {
-      const valid = `EXISTS(SELECT 1 FROM reminder_tokens t JOIN reminders r ON r.id=t.reminder_id
+    async activate(verification, management, timestamp = current(), { invitationRequired = false } = {}) {
+      const validToken = `EXISTS(SELECT 1 FROM reminder_tokens t JOIN reminders r ON r.id=t.reminder_id
         WHERE t.digest=? AND t.purpose='verify' AND t.consumed_at IS NULL AND t.expires_at>?
         AND r.status='pending' AND r.condition_version=t.condition_version)`;
-      const results = await db.batch([
-        tokenStatement(db, management, valid, [verification.digest, timestamp]),
-        db.prepare(`UPDATE reminders SET status='active',verified_at=?,updated_at=?,next_check_at=?,last_match=NULL
-          WHERE id=? AND status='pending' AND condition_version=? AND ${valid}`)
-          .bind(timestamp, timestamp, timestamp, verification.reminder_id, verification.condition_version, verification.digest, timestamp),
-        db.prepare(`UPDATE reminder_tokens SET consumed_at=? WHERE purpose='verify' AND reminder_id=? AND consumed_at IS NULL
-          AND EXISTS(SELECT 1 FROM reminder_tokens WHERE digest=? AND purpose='manage')`)
-          .bind(timestamp, verification.reminder_id, management.digest),
-        db.prepare(`UPDATE reminder_outbox SET status='cancelled',payload_ciphertext=NULL WHERE kind='verify' AND reminder_id=?
-          AND status IN ('pending','sending') AND EXISTS(SELECT 1 FROM reminder_tokens WHERE digest=? AND purpose='manage')`)
-          .bind(verification.reminder_id, management.digest),
-      ]);
-      return changes(results[0]) === 1;
+      const valid = `${validToken}${invitationRequired ? ` AND EXISTS(SELECT 1 FROM reminders r
+        JOIN reminder_invitations i ON i.id=r.invitation_id WHERE r.id=? AND r.email=? AND i.email=r.email AND i.state='bound')` : ''}`;
+      const guardValues = [verification.digest, timestamp,
+        ...(invitationRequired ? [verification.reminder_id, verification.email] : [])];
+      const statements = [];
+      if (invitationRequired) statements.push(db.prepare(`UPDATE reminder_invitations SET state='bound',bound_at=?,reservation_until=NULL
+        WHERE id=(SELECT invitation_id FROM reminders WHERE id=?) AND email=? AND state='reserved'
+        AND reservation_until>? AND ${validToken}`).bind(timestamp, verification.reminder_id, verification.email,
+          timestamp, verification.digest, timestamp));
+      const managementIndex = statements.length;
+      statements.push(tokenStatement(db, management, valid, guardValues));
+      statements.push(db.prepare(`UPDATE reminders SET status='active',verified_at=?,updated_at=?,next_check_at=?,last_match=NULL
+        WHERE id=? AND status='pending' AND condition_version=? AND ${valid}`)
+        .bind(timestamp, timestamp, timestamp, verification.reminder_id, verification.condition_version, ...guardValues));
+      statements.push(db.prepare(`UPDATE reminder_tokens SET consumed_at=? WHERE purpose='verify' AND reminder_id=? AND consumed_at IS NULL
+        AND EXISTS(SELECT 1 FROM reminder_tokens WHERE digest=? AND purpose='manage')`)
+        .bind(timestamp, verification.reminder_id, management.digest));
+      statements.push(db.prepare(`UPDATE reminder_outbox SET status='cancelled',payload_ciphertext=NULL WHERE kind='verify' AND reminder_id=?
+        AND status IN ('pending','sending') AND EXISTS(SELECT 1 FROM reminder_tokens WHERE digest=? AND purpose='manage')`)
+        .bind(verification.reminder_id, management.digest));
+      const results = await db.batch(statements);
+      return changes(results[managementIndex]) === 1;
     },
     async list(email) {
       return rows(await db.prepare(`SELECT * FROM reminders WHERE email=? AND verified_at IS NOT NULL
@@ -187,10 +267,16 @@ export function createReminderStore(db, { clock = () => new Date() } = {}) {
       if (!lease) return false;
       if (!await this.getToken(mail.token_digest, mail.kind === 'verify' ? 'verify' : 'manage', timestamp)) return false;
       if (mail.kind === 'access') return !!await db.prepare(`SELECT id FROM reminders WHERE email=? AND verified_at IS NOT NULL
-        AND status IN ('active','paused') LIMIT 1`).bind(mail.recipient_email).first();
-      const row = await db.prepare(`SELECT * FROM reminders WHERE id=? AND email=? AND condition_version=?`)
+        AND status IN ('active','paused') UNION ALL SELECT id FROM reminder_invitations WHERE email=? AND state='bound'
+        LIMIT 1`).bind(mail.recipient_email, mail.recipient_email).first();
+      const row = await db.prepare(`SELECT r.*,i.state AS invitation_state,i.email AS invitation_email,
+        i.reservation_until AS invitation_reservation_until FROM reminders r
+        LEFT JOIN reminder_invitations i ON i.id=r.invitation_id WHERE r.id=? AND r.email=? AND r.condition_version=?`)
         .bind(mail.reminder_id, mail.recipient_email, mail.condition_version).first();
-      return !!row && (mail.kind === 'verify' ? row.status === 'pending' : row.status === 'active' && row.last_match === 1);
+      if (!row) return false;
+      if (row.invitation_id && (row.invitation_email !== row.email || (row.invitation_state !== 'bound' &&
+          !(mail.kind === 'verify' && row.invitation_state === 'reserved' && row.invitation_reservation_until > timestamp)))) return false;
+      return mail.kind === 'verify' ? row.status === 'pending' : row.status === 'active' && row.last_match === 1;
     },
     async reserveMailBudget(emailKey, { totalLimit = 250, notificationLimit = 8, notification = false, day }, timestamp = current()) {
       const expiry = new Date(Date.parse(`${day}T00:00:00Z`) + 48 * 60 * 60_000).toISOString();
@@ -218,6 +304,7 @@ export function createReminderStore(db, { clock = () => new Date() } = {}) {
       const pendingCutoff = new Date(Date.parse(timestamp) - 24 * 60 * 60_000).toISOString();
       const retentionCutoff = new Date(Date.parse(timestamp) - 7 * 24 * 60 * 60_000).toISOString();
       await db.batch([
+        db.prepare(`UPDATE reminder_invitations SET state='available',email=NULL,reservation_until=NULL WHERE state='reserved' AND reservation_until<=?`).bind(timestamp),
         db.prepare(`UPDATE reminders SET status='expired',updated_at=? WHERE status='paused' AND
           CASE WHEN json_valid(conditions_json) THEN json_extract(conditions_json,'$.date') ELSE '9999-12-31' END < ?`)
           .bind(timestamp, todayInShanghai(() => new Date(timestamp))),

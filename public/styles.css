@@ -60,6 +60,7 @@ svg { display: block; }
 .button-forest { background: var(--forest); color: #faf8ef; }
 .button-forest:hover { background: var(--forest-hover); }
 .button-forest [data-icon] svg { width: 16px; height: 16px; }
+.button > svg { width: 16px; height: 16px; flex: 0 0 16px; }
 .button-light { color: var(--forest); background: #faf9ef; }
 .button-light:hover { background: #e6ecdc; }
 .button-outline { border-color: #ccd5c1; color: var(--forest); background: transparent; }

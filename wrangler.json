@@ -26,6 +26,9 @@
   },
   "vars": {
     "ENABLE_MONITORING": "true",
+    "INVITATION_REQUIRED": "true",
+    "REMINDERS_TOTAL_LIMIT": "10",
+    "REMINDERS_PER_EMAIL": "2",
     "MAIL_DAILY_LIMIT": "250",
     "MAIL_NOTIFICATION_DAILY_LIMIT": "8",
     "PUBLIC_URL": "https://youth-inn-finder.imshunsukez.workers.dev"

@@ -2,6 +2,7 @@ import { AppError } from "../domain/errors.mjs";
 import { handleQueryRequest } from "./query-routes.mjs";
 import { handleReminderRequest } from "./reminder-routes.mjs";
 import { validateReminderEnvironment } from "../infrastructure/mail.mjs";
+import { invitationRequired } from "../domain/reminders.mjs";
 
 export const APP_VERSION = "1.0.0";
 export function mailConfigured(env) {
@@ -68,7 +69,8 @@ export function createApp({ env = {}, clock = () => new Date(),
         const configured = mailConfigured(env);
         const response = jsonResponse({ ok: true, service: "youth-inn-finder", version: APP_VERSION,
           now: new Date(clock()).toISOString(), mailConfigured: configured,
-          monitoringEnabled: configured && env.ENABLE_MONITORING !== "false" });
+          monitoringEnabled: configured && env.ENABLE_MONITORING !== "false",
+          invitationRequired: invitationRequired(env) });
         return secure(request.method === "HEAD" ? new Response(null, response) : response, requestId);
       }
       if (url.pathname.startsWith("/api/")) {

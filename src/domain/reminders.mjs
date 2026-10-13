@@ -7,6 +7,8 @@ export const OBSERVATION_MAX_AGE_MS = 20 * 60_000;
 export const VERIFY_TOKEN_MS = 30 * 60_000;
 export const MANAGEMENT_TOKEN_MS = 30 * 24 * 60 * 60_000;
 
+export function invitationRequired(env = {}) { return env.INVITATION_REQUIRED === 'true' || env.INVITATION_REQUIRED === true; }
+
 export function normalizeEmail(value) {
   if (typeof value !== 'string' || value.length > 254 || /[\r\n\x00-\x1f]/.test(value)) {
     throw invalidInput('请输入有效邮箱', 'email');

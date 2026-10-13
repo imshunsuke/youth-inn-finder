@@ -1,5 +1,5 @@
 import { AppError, invalidInput } from '../domain/errors.mjs';
-import { MANAGEMENT_TOKEN_MS, VERIFY_TOKEN_MS, normalizeConditions, normalizeEmail, publicReminder } from '../domain/reminders.mjs';
+import { MANAGEMENT_TOKEN_MS, VERIFY_TOKEN_MS, normalizeConditions, normalizeEmail, publicReminder, invitationRequired } from '../domain/reminders.mjs';
 import { digestToken, encryptPayload, randomToken, validateReminderEnvironment } from '../infrastructure/mail.mjs';
 
 const accepted = Object.freeze({ message: '如果可以建立提醒，我们会发送邮件。请检查收件箱和垃圾邮件。' });
@@ -38,15 +38,16 @@ export function createReminderService({ store, env = {}, clock = () => new Date(
       throw new AppError('操作过于频繁，请稍后再试', { code: 'RATE_LIMITED', status: 429, retryable: true });
     }
   }
-  async function mutationRate(ip, email) {
-    await rate('create-ip', ip, 12, 60 * 60_000);
+  async function mutationRate(ip, email, { checkIp = true, sendCooldown = true } = {}) {
+    if (checkIp) await rate('create-ip', ip, 12, 60 * 60_000);
     await rate('create-email', email, 3, 60 * 60_000);
+    if (!sendCooldown) return true;
     // Intentionally return the same response when the resend cooldown applies.
     return store.consumeRate(`mail-cooldown:${await digestToken(email)}`, 1, 5 * 60_000, now());
   }
   async function access(email, timestamp) {
     const job = await createMailJob({ env, email, kind: 'access', timestamp });
-    await store.enqueueAccess(job.tokenRecord, job.mail);
+    await store.enqueueAccess(job.tokenRecord, job.mail, { invitationRequired: invitationRequired(env) });
   }
   async function owner(token, ip = 'unknown') {
     // Existing capabilities remain usable while outbound mail is disabled.
@@ -58,26 +59,70 @@ export function createReminderService({ store, env = {}, clock = () => new Date(
     return record.email;
   }
   return Object.freeze({
-    async create({ email: value, conditions: valueConditions }, { ip = 'unknown' } = {}) {
+    async create({ email: value, conditions: valueConditions, inviteCode }, { ip = 'unknown', token: managementToken } = {}) {
       validateReminderEnvironment(env);
       const email = normalizeEmail(value); const conditions = normalizeConditions(valueConditions, { clock });
       const timestamp = now(); const conditionsJson = JSON.stringify(conditions);
-      const totalLimit = configuredLimit(env.REMINDERS_TOTAL_LIMIT, 30, 40);
+      const required = invitationRequired(env);
+      const invitationError = () => new AppError('邮件提醒仅限受邀用户，请使用有效邀请码或管理邮件链接',
+        { code: 'INVITATION_REQUIRED', status: 403 });
+      let invitation = null; let codeDigest = null; let authenticated = false;
+      if (required) {
+        await rate('create-ip', ip, 12, 60 * 60_000);
+        if (managementToken) {
+          if (await owner(managementToken, ip) !== email) throw invitationError();
+          invitation = await store.invitationForOwner(email); authenticated = true;
+        } else {
+          if (!validToken(inviteCode)) throw invitationError();
+          codeDigest = await digestToken(inviteCode);
+          invitation = await store.invitationByCode(codeDigest);
+          if (!invitation || !['available','reserved'].includes(invitation.state) || invitation.code_expires_at<=timestamp ||
+              (invitation.state==='reserved' && invitation.reservation_until>timestamp && invitation.email!==email)) throw invitationError();
+        }
+        if (!invitation) throw invitationError();
+      }
+      const totalLimit = configuredLimit(env.REMINDERS_TOTAL_LIMIT, required ? 10 : 30, required ? 10 : 40);
       const capacityError = () => new AppError('提醒名额暂满，请稍后再试。查房仍可正常使用。',
         { code: 'REMINDER_CAPACITY', status: 503, retryable: true });
-      // Public capacity is checked independently of email existence, so a full
-      // deployment has the same response for new and existing addresses.
-      if (!await store.hasCapacity(totalLimit, timestamp)) throw capacityError();
-      if (!await mutationRate(ip, email)) return accepted;
-      const existing = await store.findDuplicate(email, conditionsJson);
+      if (required && authenticated) {
+        await mutationRate(ip, email, { checkIp: false, sendCooldown: false });
+        const existing = await store.findDuplicate(email, conditionsJson);
+        if (existing?.invitation_id === invitation.id && ['active','paused'].includes(existing.status)) {
+          return { data: publicReminder(existing), message: existing.status === 'paused' ? '该提醒已暂停' : '该提醒已存在' };
+        }
+        const row = existing?.invitation_id === invitation.id ? existing : { id: crypto.randomUUID(), email,
+          conditions_json: conditionsJson, created_at: timestamp, updated_at: timestamp };
+        const created = await store.createForOwner(row, invitation.id, timestamp);
+        if (!created) {
+          if (await store.ownerUsage(email, timestamp) >= 2) throw new AppError('每人最多保留2条提醒，请先删除不需要的提醒',
+            { code: 'REMINDER_LIMIT', status: 409 });
+          if (!await store.hasCapacity(totalLimit, timestamp)) throw capacityError();
+          throw invitationError();
+        }
+        return { data: publicReminder(created), message: created.status === 'paused' ? '该提醒已暂停' : '提醒已启用' };
+      }
+      let existing = required ? await store.findDuplicate(email, conditionsJson) : null;
+      if (required && existing?.invitation_id !== invitation.id) existing = null;
+      const renewingSlot = required && existing?.status === 'pending' &&
+        Date.parse(existing.updated_at) > Date.parse(timestamp) - VERIFY_TOKEN_MS;
+      // An invite holder may resend verification for its own live reservation
+      // even when all slots are occupied; this does not claim an additional slot.
+      // The public legacy mode keeps its email-independent capacity response.
+      if (!renewingSlot && !await store.hasCapacity(totalLimit, timestamp)) throw capacityError();
+      if (!await mutationRate(ip, email, { checkIp: !required })) return accepted;
+      if (!required) existing = await store.findDuplicate(email, conditionsJson);
       if (existing && existing.status !== 'pending') { await access(email, timestamp); return accepted; }
       const row = existing ?? { id: crypto.randomUUID(), email, conditions_json: conditionsJson, condition_version: 1,
         created_at: timestamp, updated_at: timestamp };
       const job = await createMailJob({ env, email, kind: 'verify', reminder: row, timestamp });
       const result = await store.createPending(row, job.tokenRecord, job.mail,
-        configuredLimit(env.REMINDERS_PER_EMAIL, 3, 10), totalLimit);
-      if (Number(result[1]?.meta?.changes ?? result[1]?.changes ?? 0) === 0 &&
-          !await store.hasCapacity(totalLimit, timestamp)) throw capacityError();
+        configuredLimit(env.REMINDERS_PER_EMAIL, required ? 2 : 3, required ? 2 : 10), totalLimit,
+        { invitationRequired: required, invitationId: invitation?.id ?? null, codeDigest, owner: authenticated });
+      if (!result.queued) {
+        if (!await store.hasCapacity(totalLimit, timestamp)) throw capacityError();
+        if (required) throw new AppError('提醒名额已满或邀请已失效，请删除不需要的提醒或联系邀请人',
+          { code: 'REMINDER_LIMIT', status: 409 });
+      }
       return accepted;
     },
     async requestAccess({ email: value }, { ip = 'unknown' } = {}) {
@@ -97,7 +142,7 @@ export function createReminderService({ store, env = {}, clock = () => new Date(
       const managementToken = randomToken();
       const management = { digest: await digestToken(managementToken), purpose: 'manage', email: verification.email,
         created_at: timestamp, expires_at: new Date(Date.parse(timestamp) + MANAGEMENT_TOKEN_MS).toISOString() };
-      if (!await store.activate(verification, management, timestamp)) throw invalidToken();
+      if (!await store.activate(verification, management, timestamp, { invitationRequired: invitationRequired(env) })) throw invalidToken();
       return { managementToken, data: (await store.list(verification.email)).map(publicReminder) };
     },
     async list(token, { ip = 'unknown' } = {}) {

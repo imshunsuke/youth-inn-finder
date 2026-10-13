@@ -13,6 +13,7 @@
     "dev": "node --env-file-if-exists=.env.local --watch server.mjs",
     "test": "node --test test/*.test.mjs",
     "check": "node scripts/check.mjs",
+    "invites": "node scripts/invitations.mjs",
     "preview:cloud": "wrangler dev",
     "deploy": "node --env-file-if-exists=.env.local scripts/deploy.mjs"
   },

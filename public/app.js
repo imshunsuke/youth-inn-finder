@@ -122,7 +122,7 @@ function renderFilters() {
 function render() { renderCalendar(); renderFilters(); renderResults(); }
 async function loadCalendar({ force = false } = {}) {
   const key = calendarKey(), cached = calendarCache.get(key);
-  if (!force && cached && Date.now() - cached.at < 60_000) { calendarController?.abort(); calendarSequence++; state.calendarLoading = false; state.calendar = cached.payload; state.calendarKey = key; state.calendarError = ""; render(); return; }
+  if (!force && cached && Date.now() - cached.at < 60_000) { calendarController?.abort(); calendarSequence++; state.calendarLoading = false; state.calendar = cached.payload; state.calendarKey = key; state.calendarError = ""; reminders.refreshStations(); render(); return; }
   calendarController?.abort(); calendarController = new AbortController(); const sequence = ++calendarSequence;
   lastCalendarAttemptAt = Date.now();
   state.calendarLoading = true; state.calendarError = ""; if (cached) { state.calendar = cached.payload; state.calendarKey = key; } render();
@@ -134,6 +134,7 @@ async function loadCalendar({ force = false } = {}) {
       throw new Error("房源数据格式暂时异常，请稍后重试");
     }
     state.calendar = result.payload; state.calendarKey = key; calendarCache.set(key, { at: Date.now(), payload: result.payload });
+    reminders.refreshStations();
   } catch (error) { if (error.name === "AbortError" || sequence !== calendarSequence) return; state.calendarError = error.status === 503 ? "房源数据正在准备，请稍后重试" : error.message; }
   finally { if (sequence === calendarSequence) { state.calendarLoading = false; render(); } }
 }
