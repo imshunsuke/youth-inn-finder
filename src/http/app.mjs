@@ -43,7 +43,7 @@ async function admitInterval(request, env, clock) {
   const ip = request.headers.get("CF-Connecting-IP") || "local";
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${env.APP_SECRET}:${ip}`));
   const fingerprint = Array.from(new Uint8Array(bytes), (value) => value.toString(16).padStart(2, "0")).join("");
-  for (const [key, limit] of [[`interval:ip:${window}:${fingerprint}`, 60], [`interval:global:${window}`, 300]]) {
+    for (const [key, limit] of [[`interval:ip:${window}:${fingerprint}`, 90], [`interval:global:${window}`, 600]]) {
     const row = await env.DB.prepare(`INSERT INTO http_rate_limits (bucket_key,count,expires_at) VALUES (?,1,?)
       ON CONFLICT(bucket_key) DO UPDATE SET count=http_rate_limits.count+1 RETURNING count`)
       .bind(key, (window + 1) * 600_000).first();
@@ -52,7 +52,7 @@ async function admitInterval(request, env, clock) {
 }
 
 export function createApp({ env = {}, clock = () => new Date(),
-  queryHandler = handleQueryRequest, reminderHandler = handleReminderRequest, assetHandler } = {}) {
+  queryHandler = handleQueryRequest, reminderHandler = handleReminderRequest, assetHandler, onIntervalPending } = {}) {
   return async function handle(request) {
     const requestId = crypto.randomUUID();
     try {
@@ -78,7 +78,7 @@ export function createApp({ env = {}, clock = () => new Date(),
         if (url.pathname === "/api/available" && request.method === "GET" && url.searchParams.has("endDate")) {
           await admitInterval(request, env, clock);
         }
-        const options = { db: env.DB, env, clock, maxIntervalJobs: 300 };
+        const options = { db: env.DB, env, clock, maxIntervalJobs: 300, onIntervalPending };
         const response = await queryHandler(request, options) ?? await reminderHandler(request, options) ??
           jsonResponse({ error: "接口不存在", code: "NOT_FOUND" }, 404);
         return secure(response, requestId);

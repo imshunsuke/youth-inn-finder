@@ -35,6 +35,6 @@ export function intervalRetry({ status = 200, retryAfter, refreshAfterMs = 60_00
   const delay = Number.isFinite(seconds) ? seconds : Number.isFinite(dateDelay) ? dateDelay : 0;
   return {
     retryable: !(status >= 400 && status < 500 && ![408, 429].includes(status)),
-    retryAt: now + Math.max(60_000, Number.isFinite(refreshAfterMs) ? refreshAfterMs : 0, delay),
+    retryAt: now + Math.max(10_000, Number.isFinite(refreshAfterMs) ? refreshAfterMs : 0, delay),
   };
 }
