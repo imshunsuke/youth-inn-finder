@@ -50,6 +50,7 @@ export function summarize(samples, traces, { durationMs, expectedDurationMs, idl
   const ranges = {};
   for (const date of [...new Set(queries.map((s) => s.date))]) {
     const rows = queries.filter((s) => s.date === date), first = rows.find((s) => s.fresh > 0), full = rows.find((s) => s.fresh === s.total && s.total > 0 && s.unknown === 0);
+    if (rows[0]?.fresh!==0) gates.push(`INITIAL_COLD_NOT_PROVEN:${date}`);
     const resumed = rows.filter((s) => s.elapsedMs >= idleEndMs), resumedFull = resumed.find((s)=>s.fresh===s.total && s.total>0 && s.unknown===0);
     const afterSecondExpiry = resumed.filter((s) => s.elapsedMs >= (resumed[0]?.elapsedMs ?? Infinity) + CRITERIA.cacheAgeMs);
     const laterFull = afterSecondExpiry.find((s) => s.fresh===s.total && s.total>0 && s.unknown===0);
@@ -63,7 +64,7 @@ export function summarize(samples, traces, { durationMs, expectedDurationMs, idl
     if (!laterFull) gates.push(`SECOND_CACHE_CYCLE:${date}`);
   }
   if (Object.keys(ranges).length < 3) gates.push("THREE_RANGES_REQUIRED");
-  if (queries.some((s) => s.elapsedMs>=idleStartMs && s.elapsedMs<idleEndMs)) gates.push("IDLE_PHASE_NOT_IDLE");
+  if (queries.some((s) => (s.startedElapsedMs??s.elapsedMs)>=idleStartMs && (s.startedElapsedMs??s.elapsedMs)<idleEndMs)) gates.push("IDLE_PHASE_NOT_IDLE");
   const idleCalendars = samples.filter((s)=>s.kind === "calendar" && s.elapsedMs>=idleStartMs && s.elapsedMs<idleEndMs);
   if (new Set(idleCalendars.map((s)=>s.latestSample).filter(Boolean)).size<2) gates.push("CRON_PROGRESS_NOT_PROVEN");
   if (idleCalendars.some((s)=>s.http===200 && s.total>0 && s.fresh/s.total<.85)) gates.push("BACKGROUND_CALENDAR_FRESHNESS");
@@ -125,7 +126,7 @@ export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acc
       if ([429,503].includes(http) && /^\d+$/.test(retry??"")) suppressedUntil.set(key,Date.now()+Number(retry)*1000);
       const text=await r.text(); if(text.length>1_000_000) throw new Error("oversize"); payload=JSON.parse(text);
       const c=payload.meta?.snapshotCoverage;
-      row={ kind,date,at:new Date().toISOString(),elapsedMs:Date.now()-started,http:r.status,durationMs:Date.now()-began,
+      row={ kind,date,at:new Date().toISOString(),startedElapsedMs:began-started,elapsedMs:Date.now()-started,http:r.status,durationMs:Date.now()-began,
         deployment, fresh:c?.freshStations,total:c?.totalStations,stale:c?.staleStations,missing:c?.missingStations,
         unknown:payload.meta?.coverage?.unknownStations, rooms:payload.data?.length,latestSample:payload.meta?.latestFetchedAt,
         catalogStatus:payload.meta?.catalogStatus,code:typeof payload.code==="string"?payload.code:undefined,
@@ -143,7 +144,8 @@ export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acc
       const elapsed=Date.now()-started, minute=Math.floor(elapsed/60_000), idle=minute>=10 && minute<35;
       const tickStart=Date.now();
       if (minute!==lastMinute) { await sample("calendar","/api/calendar?includeDayItems=false&includeOfficialDetails=false&onlyOnShelf=true"); await sample("health","/api/health"); lastMinute=minute; }
-      if (!idle) {
+      const queryElapsed=Date.now()-started;
+      if (!(queryElapsed>=600_000 && queryElapsed<2100_000)) {
         const results=await Promise.all(dates.map((date)=>sample("query",`/api/available?date=${date}&endDate=${endDate}&onlyOnShelf=true&limit=200&includeOfficialDetails=false`,{date})));
         if (results.some((r)=>r.payload?.meta?.collection?.advanceUrl==="/api/collection")) await sample("collection","/api/collection",{method:"POST"});
         if (results.some((r)=>!r.row.skipped && (r.row.http===429 || r.row.http===200 && r.row.deployment!==expectedDeployment || r.row.issues?.length))) {
