@@ -104,7 +104,7 @@ test("collector promotes active conditions ahead of a full public queue and demo
   await collector.run();
   assert.ok(posted.includes("chosen"));
   assert.equal((await db.prepare("SELECT priority FROM interval_query_jobs WHERE station_id='chosen'").first()).priority, 1);
-  assert.equal(await count(db), 300);
+  assert.equal(await count(db), 299, "the completed public job releases its slot; the reminder job stays");
   await db.prepare("UPDATE reminders SET status='paused' WHERE id='verified-reminder'").run();
   await collector.run();
   assert.equal((await db.prepare("SELECT priority FROM interval_query_jobs WHERE station_id='chosen'").first()).priority, 0);

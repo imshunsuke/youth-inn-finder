@@ -166,6 +166,12 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
       updated_at = ? WHERE (station_id, start_date, end_date) IN
       (SELECT json_extract(value, '$.stationId'), json_extract(value, '$.startDate'), json_extract(value, '$.endDate') FROM json_each(?))
       AND ${guard(lease)}`, [json(updates), json(updates), json(updates), attemptAt, json(updates), ...guardedBindings(lease)]));
+    // Public lookups are one-shot work. Keep the snapshot, but release their slots
+    // in the same transaction; only live reminder jobs need periodic refreshes.
+    if (successes.length) statements.push(prepare(`DELETE FROM interval_query_jobs
+      WHERE (priority=0 OR priority_until<=?) AND (station_id, start_date, end_date) IN
+        (SELECT json_extract(value, '$.stationId'), json_extract(value, '$.startDate'), json_extract(value, '$.endDate') FROM json_each(?))
+      AND ${guard(lease)}`, [attemptAt, json(successes), ...guardedBindings(lease)]));
     return statements.length ? db.batch(statements) : [];
   }
 
@@ -197,10 +203,12 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
   async function dueIntervalJobs(limit = 30) {
     return allRows(prepare(`SELECT * FROM interval_query_jobs WHERE expires_at > ? AND next_attempt_at <= ?
       ORDER BY CASE WHEN priority_until > ? THEN priority ELSE 0 END DESC,
-        next_attempt_at, station_id, start_date, end_date LIMIT ?`, [now(), now(), now(), limit]));
+        next_attempt_at, created_at, station_id, start_date, end_date LIMIT ?`, [now(), now(), now(), limit]));
   }
 
-  async function enqueueIntervalQuery(conditions, { ttlMs = 30 * 60_000, maxJobs = 300, catalogMaxAgeMs = DEFAULT_SNAPSHOT_FRESHNESS.catalogMaxAgeMs } = {}) {
+  async function enqueueIntervalQuery(conditions, { ttlMs = 30 * 60_000, maxJobs = 300,
+    catalogMaxAgeMs = DEFAULT_SNAPSHOT_FRESHNESS.catalogMaxAgeMs,
+    intervalMaxAgeMs = DEFAULT_SNAPSHOT_FRESHNESS.intervalMaxAgeMs, observations } = {}) {
     const query = parseCommonQuery(conditions);
     const dates = validateStayDates(conditions.date, conditions.endDate);
     if (!dates.endDate) throw invalidInput("区间采集必须提供离店日期", "endDate");
@@ -211,20 +219,25 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
     if (!Number.isFinite(ttlMs) || ttlMs <= 0 || !Number.isInteger(maxJobs) || maxJobs < 1) throw new TypeError("Invalid interval queue configuration");
     const catalog = await readCatalog(query.houseType, { maxAgeMs: catalogMaxAgeMs });
     if (catalog.status !== "fresh") throw snapshotUnavailable(catalog.status);
-    const ids = [...new Set(filterListings(catalog.payload.items, query).map((item) => String(item.id)))];
+    const candidates = [...new Set(filterListings(catalog.payload.items, query).map((item) => String(item.id)))];
+    const snapshots = observations ? new Map(observations.filter((item) => item.kind === "interval").map((item) => [item.stationId, item]))
+      : await readIntervals(candidates, dates.startDate, dates.endDate, { maxAgeMs: intervalMaxAgeMs });
+    const ids = candidates.filter((id) => snapshots.get(id)?.status !== "fresh");
     if (!ids.length) return { requested: 0, accepted: 0, capacityLimited: false };
     const at = now();
     const expiresAt = Math.min(at + ttlMs, Date.parse(`${dates.startDate}T00:00:00+08:00`));
     if (expiresAt <= at) return { requested: ids.length, accepted: 0, capacityLimited: false };
-    return enqueueIntervalJobs(ids.map((stationId) => ({ stationId, startDate: dates.startDate, endDate: dates.endDate, expiresAt })), { maxJobs });
+    return enqueueIntervalJobs(ids.map((stationId) => ({ stationId, startDate: dates.startDate, endDate: dates.endDate, expiresAt })), { maxJobs, intervalMaxAgeMs });
   }
 
   // Internal bulk admission for active reminder collection. Callers validate dates
   // and filter against a trusted catalog first; no reminder rows are mutated here.
   async function enqueueIntervalJobs(tasks, { maxJobs = 300, lease, priority = 0,
-    reservedPriorityJobs = maxJobs >= 40 ? 40 : 0, priorityTtlMs = 45 * 60_000 } = {}) {
+    reservedPriorityJobs = maxJobs >= 40 ? 40 : 0, priorityTtlMs = 45 * 60_000,
+    intervalMaxAgeMs = DEFAULT_SNAPSHOT_FRESHNESS.intervalMaxAgeMs } = {}) {
     if (!tasks.length) return { requested: 0, accepted: 0, capacityLimited: false };
     if (!Number.isInteger(maxJobs) || maxJobs < 1) throw new TypeError("Invalid interval queue capacity");
+    if (!Number.isFinite(intervalMaxAgeMs) || intervalMaxAgeMs <= 0) throw new TypeError("Invalid interval snapshot freshness");
     if (![0, 1].includes(priority) || !Number.isInteger(reservedPriorityJobs) || reservedPriorityJobs < 0 ||
         reservedPriorityJobs > maxJobs || !Number.isFinite(priorityTtlMs) || priorityTtlMs <= 0) {
       throw new TypeError("Invalid interval queue priority configuration");
@@ -235,6 +248,16 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
       .map((task) => ({ ...task, priorityUntil: priority ? Math.min(task.expiresAt, at + priorityTtlMs) : 0 }));
     if (!jobs.length) return { requested: 0, accepted: 0, capacityLimited: false };
     const payload = json(jobs);
+    const freshInterval = (stationId, startDate, endDate) => `EXISTS (SELECT 1 FROM query_intervals AS sample WHERE sample.station_id=${stationId}
+      AND sample.start_date=${startDate} AND sample.end_date=${endDate} AND sample.fetched_at>? AND sample.fetched_at<=?
+      AND CASE WHEN json_valid(sample.payload_json) THEN
+        (json_extract(sample.payload_json,'$.availabilityStatus')='known' AND json_type(sample.payload_json,'$.availableCount')='integer'
+          AND json_extract(sample.payload_json,'$.availableCount') BETWEEN 0 AND 9007199254740991)
+        OR (json_extract(sample.payload_json,'$.availabilityStatus')='unknown' AND json_type(sample.payload_json,'$.availableCount')='null')
+      ELSE 0 END)`;
+    const freshJob = freshInterval("job.station_id", "job.start_date", "job.end_date");
+    const freshIncoming = freshInterval("json_extract(value, '$.stationId')", "json_extract(value, '$.startDate')", "json_extract(value, '$.endDate')");
+    const freshBindings = [new Date(at - intervalMaxAgeMs).toISOString(), new Date(at).toISOString()];
     // Public work cannot occupy the reserved reminder capacity. Active reminder
     // admission may evict ordinary work when an older/full queue needs space.
     // All admission/eviction is one transaction; retries and successful due times
@@ -243,6 +266,13 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
       prepare(`DELETE FROM interval_query_jobs WHERE expires_at <= ? AND ${guard(lease)}`, [at, ...guardedBindings(lease)]),
       prepare(`UPDATE interval_query_jobs SET priority=0, priority_until=0 WHERE priority=1
         AND priority_until<=? AND ${guard(lease)}`, [at, ...guardedBindings(lease)]),
+      // Reclaim successful jobs left by older releases, even before their TTL.
+      prepare(`DELETE FROM interval_query_jobs AS job WHERE priority=0 AND failure_count=0 AND last_error_code IS NULL
+        AND ${freshJob} AND ${guard(lease)}`,
+        [...freshBindings, ...guardedBindings(lease)]),
+    ];
+    const updateIndex = statements.length;
+    statements.push(
       prepare(`UPDATE interval_query_jobs AS job SET expires_at=MAX(expires_at,
         (SELECT json_extract(value, '$.expiresAt') FROM json_each(?) WHERE json_extract(value, '$.stationId')=job.station_id
           AND json_extract(value, '$.startDate')=job.start_date AND json_extract(value, '$.endDate')=job.end_date)),
@@ -252,8 +282,10 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
         updated_at=?
         WHERE (station_id, start_date, end_date) IN
           (SELECT json_extract(value, '$.stationId'), json_extract(value, '$.startDate'), json_extract(value, '$.endDate') FROM json_each(?))
-        AND ${guard(lease)}`, [payload, priority, priority, payload, at, payload, ...guardedBindings(lease)]),
-    ];
+        AND ${guard(lease)} ${priority === 0 ? `AND NOT ${freshJob}` : ""}`,
+      [payload, priority, priority, payload, at, payload, ...guardedBindings(lease), ...(priority === 0 ? freshBindings : [])]),
+    );
+    const evictionIndex = statements.length;
     if (priority === 1) statements.push(prepare(`DELETE FROM interval_query_jobs
       WHERE (station_id, start_date, end_date) IN (SELECT station_id, start_date, end_date FROM interval_query_jobs
         WHERE priority=0 ORDER BY expires_at, updated_at, station_id, start_date, end_date LIMIT MAX(0,
@@ -266,18 +298,24 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
       ? "MAX(0, ? - (SELECT COUNT(*) FROM interval_query_jobs WHERE expires_at > ?))"
       : "MAX(0, MIN(? - (SELECT COUNT(*) FROM interval_query_jobs WHERE expires_at > ?), ? - (SELECT COUNT(*) FROM interval_query_jobs WHERE expires_at > ? AND priority=0)))";
     const capacityBindings = priority === 1 ? [maxJobs, at] : [maxJobs, at, maxJobs - reservedPriorityJobs, at];
+    const insertIndex = statements.length;
     statements.push(prepare(`INSERT INTO interval_query_jobs
       (station_id, start_date, end_date, expires_at, priority, priority_until, created_at, updated_at)
         SELECT json_extract(value, '$.stationId'), json_extract(value, '$.startDate'), json_extract(value, '$.endDate'),
           json_extract(value, '$.expiresAt'), ?, json_extract(value, '$.priorityUntil'), ?, ? FROM json_each(?)
         WHERE NOT EXISTS (SELECT 1 FROM interval_query_jobs WHERE station_id=json_extract(value, '$.stationId')
-          AND start_date=json_extract(value, '$.startDate') AND end_date=json_extract(value, '$.endDate')) AND ${guard(lease)}
+          AND start_date=json_extract(value, '$.startDate') AND end_date=json_extract(value, '$.endDate')) AND ${guard(lease)} ${priority === 0 ? `AND NOT ${freshIncoming}` : ""}
         LIMIT ${capacitySql}`,
-    [priority, at, at, payload, ...guardedBindings(lease), ...capacityBindings]));
+    [priority, at, at, payload, ...guardedBindings(lease), ...(priority === 0 ? freshBindings : []), ...capacityBindings]));
+    // A collector may finish after the HTTP read. Do not resurrect that work or
+    // misreport the completed stations as rejected by the capacity limit.
+    if (priority === 0) statements.push(prepare(`SELECT COUNT(*) AS requested FROM json_each(?) WHERE NOT ${freshIncoming}`,
+      [payload, ...freshBindings]));
     const results = await db.batch(statements);
-    const accepted = changes(results[2]) + changes(results.at(-1));
-    const evicted = priority === 1 ? changes(results[3]) : 0;
-    return { requested: jobs.length, accepted, capacityLimited: accepted < jobs.length, ...(evicted ? { evicted } : {}) };
+    const accepted = changes(results[updateIndex]) + changes(results[insertIndex]);
+    const requested = priority === 0 ? results.at(-1).results[0].requested : jobs.length;
+    const evicted = priority === 1 ? changes(results[evictionIndex]) : 0;
+    return { requested, accepted, capacityLimited: accepted < requested, ...(evicted ? { evicted } : {}) };
   }
 
   // A complete active-reminder scan can immediately demote paused/cancelled work.

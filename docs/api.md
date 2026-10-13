@@ -71,6 +71,8 @@
 
 HTTP 查询只读取持久快照，不在前台逐站访问官网。缺少目录时返回 `503 SNAPSHOT_PENDING`，过期目录返回 `503 SNAPSHOT_STALE`；缺少部分站点快照时可返回 `200` 和部分结果。缺少连续入住快照时会有限入队，`meta.collection` 说明是否已排队或容量受限。按 `Retry-After` 或 `meta.refreshAfterMs` 等待，不保证立即完成；默认快照满 20 分钟后视为过期。
 
+区间查询只为缺失、过期或无效快照的站点入队，成功的普通查询任务释放名额并保留快照；提醒任务仍定期刷新。`collection.requested` 是本次仍需更新的站点数，`accepted` 包括新入队和已有的待处理任务。`status=capacity-limited` 表示其中有站点未能入队，即使 `accepted` 大于 0；`queued` 表示待更新站点全部已排队。HTTP `200` 和 `pending=true` 只表示返回了部分结果，不能据此断言后台正在执行该查询。页面展示 `snapshotCoverage.freshStations/totalStations` 的快照更新进度；失败、排队和未入队分别提示，参数错误不会自动无限重试。
+
 ## 提醒授权与条件
 
 当前在线服务采用[邀请内测](invitations.md)：5 个邮箱，每人最多 2 条占位提醒，总上限 10 条。启用、暂停和最近 30 分钟更新的待验证提醒占名额；已取消、到期或过期的待验证提醒不占份数。
