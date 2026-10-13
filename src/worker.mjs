@@ -4,13 +4,14 @@ import { createQueryService } from "./application/query-service.mjs";
 import { createSnapshotClient } from "./infrastructure/snapshot-store.mjs";
 import { runMonitor } from "./application/monitor.mjs";
 import { createReminderStore } from "./infrastructure/reminder-store.mjs";
+import { COLLECTION_CRON, COLLECTION_POLICY } from "./application/collection-policy.mjs";
 
 export async function runScheduled(env, { clock = () => new Date(), fetchImpl = (...args) => globalThis.fetch(...args), phase = "all" } = {}) {
   if (!env.DB) return { disabled: true, reason: "storage-unavailable" };
   const result = {};
   if (["all", "collection"].includes(phase)) {
     try {
-      result.collection = await createCollector({ db: env.DB, clock, fetchImpl, budget: 20, maxCatalogRefreshes: 1, leaseWaitMs: 25_000 }).run();
+      result.collection = await createCollector({ db: env.DB, clock, fetchImpl, ...COLLECTION_POLICY }).run();
       const { status, requestsUsed, catalogs, calendars, intervals } = result.collection;
       console.info(JSON.stringify({ event: "collection_summary", status, requestsUsed, catalogs, calendars, intervals }));
     } catch {
@@ -37,7 +38,7 @@ export default {
     return response;
   },
   async scheduled(controller, env) {
-    const phase = controller.cron === "*/2 * * * *" ? "collection" : controller.cron === "0 19 * * *" ? "cleanup" : "monitor";
+    const phase = controller.cron === COLLECTION_CRON ? "collection" : controller.cron === "0 19 * * *" ? "cleanup" : "monitor";
     return runScheduled(env, { phase });
   },
 };

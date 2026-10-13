@@ -101,7 +101,7 @@ export function createApp({ env = {}, clock = () => new Date(),
         if (url.pathname === "/api/available" && request.method === "GET" && url.searchParams.has("endDate")) {
           await admitInterval(request, env, clock);
         }
-        const options = { db: env.DB, env, clock, maxIntervalJobs: 300, onIntervalPending, interactiveCollection };
+        const options = { db: env.DB, env, clock, maxIntervalJobs: 300, intervalQueueTtlMs: 5 * 60_000, onIntervalPending, interactiveCollection };
         const response = await queryHandler(request, options) ?? await reminderHandler(request, options) ??
           jsonResponse({ error: "接口不存在", code: "NOT_FOUND" }, 404);
         return secure(response, requestId);

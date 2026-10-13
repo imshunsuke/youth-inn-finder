@@ -3,6 +3,7 @@ import { icon, hydrateIcons, escapeHtml as esc, todayInShanghai, addDays, validD
 import { setupReminders } from "./lib/reminders.mjs";
 import { intervalFeedback, intervalRetry } from "./lib/interval-status.mjs";
 import { createCollectionPump } from "./lib/collection-pump.mjs";
+import { freshSample, favoriteForQuery, freshIntervalView } from "./lib/listing-state.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const today = todayInShanghai();
@@ -54,7 +55,7 @@ function dayView(date) {
   const items = [];
   for (const station of stations) {
     const observation = station.availability?.find((day) => day.date === date);
-    if (!observation || !["known", "open"].includes(observation.availabilityStatus) || !Number.isSafeInteger(observation.availableCount) || observation.availableCount < 0) { unknown++; continue; }
+    if (!freshSample(station) || !observation || !["known", "open"].includes(observation.availabilityStatus) || !Number.isSafeInteger(observation.availableCount) || observation.availableCount < 0) { unknown++; continue; }
     if (observation.availableCount >= state.minCount) items.push({ ...station, availableCount: observation.availableCount, availabilityStatus: "known" });
   }
   const knownCount = items.reduce((sum, station) => sum + station.availableCount, 0);
@@ -78,7 +79,8 @@ function displaySource() {
   const entry = state.interval?.key === intervalKey() ? state.interval : null, payload = entry?.payload;
   const status = payload?.meta?.availabilityStatus, partial = payload?.meta?.partial || status === "partial" || status === "unknown";
   const pending = entry?.pending || payload?.pending === true || payload?.meta?.pending === true;
-  return { status: status === "not-open" ? "not-open" : pending ? "pending" : payload ? partial ? "unknown" : "open" : "unknown", items: Array.isArray(payload?.data) ? payload.data.filter(matches) : [], meta: payload?.meta, loading: entry?.loading, error: entry?.error, stale: entry?.stale, unknown: payload?.meta?.coverage?.unknownStations ?? 0, total: payload?.meta?.coverage?.totalStations ?? 0 };
+  const view = freshIntervalView(payload), items = view.items.filter(matches), total = payload?.meta?.coverage?.totalStations ?? 0;
+  return { status: status === "not-open" ? "not-open" : view.stale ? "unknown" : pending ? "pending" : payload ? partial ? "unknown" : "open" : "unknown", items, meta: payload?.meta, loading: entry?.loading, error: entry?.error, stale: view.stale, unknown: view.stale ? Math.max(0,total-items.length) : payload?.meta?.coverage?.unknownStations ?? 0, total };
 }
 function stationCard(station, { favorite = false } = {}) {
   const saved = state.favorites.has(station.id), known = Number.isSafeInteger(station.availableCount) && station.availableCount >= 0, distance = measuredDistance(station);
@@ -102,12 +104,13 @@ function renderResults() {
   else if (partial || !state.calendar) $("#results").innerHTML = emptyState("部分房源尚待确认", "暂未确认有房，不代表没有房源，请稍后重试。");
   else $("#results").innerHTML = emptyState("暂无匹配房源", "试试其他日期或区域，也可以建立有房提醒。", state.district || state.q || state.minCount > 1 ? "filters" : "reminder");
   const currentById = new Map(allStations().map((station) => [station.id, station])), confirmed = new Map(source.items.map((station) => [station.id, station]));
-  $("#favorites").innerHTML = state.favorites.size ? [...state.favorites.values()].map((station) => stationCard({ ...station, ...currentById.get(station.id), ...confirmed.get(station.id) }, { favorite: true })).join("") : emptyState("还没有收藏", "点击驿站卡片上的收藏图标，方便下次对比。", "find");
+  $("#favorites").innerHTML = state.favorites.size ? [...state.favorites.values()].map((station) => stationCard(favoriteForQuery(station, currentById.get(station.id), confirmed.get(station.id)), { favorite: true })).join("") : emptyState("还没有收藏", "点击驿站卡片上的收藏图标，方便下次对比。", "find");
   $("#favorite-count").textContent = state.favorites.size;
   const pieces = [];
   if (source.loading) pieces.push("正在更新");
   else if (source.meta?.pending && source.status !== "pending") pieces.push("仍在更新");
   if (source.error) pieces.push(`${source.error}${items.length ? "，保留上次结果" : ""}`);
+  else if (source.stale) pieces.push("上次房源结果已过期，等待更新");
   else if (source.status === "pending") pieces.push(intervalFeedback(source.meta).summary);
   else if (partial && source.meta) pieces.push(source.total > 0 ? `部分数据 · ${Math.max(0, source.total - source.unknown)}/${source.total} 个驿站已更新` : "部分数据待确认");
   else if (source.status === "not-open") pieces.push("尚未开放，具体以官方页面为准");

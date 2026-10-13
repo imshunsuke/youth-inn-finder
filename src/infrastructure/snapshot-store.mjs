@@ -277,17 +277,18 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
     const at = now();
     const expiresAt = Math.min(at + ttlMs, Date.parse(`${dates.startDate}T00:00:00+08:00`));
     if (expiresAt <= at) return { requested: ids.length, accepted: 0, capacityLimited: false };
-    return enqueueIntervalJobs(ids.map((stationId) => ({ stationId, startDate: dates.startDate, endDate: dates.endDate, expiresAt })), { maxJobs, intervalMaxAgeMs });
+    return enqueueIntervalJobs(ids.map((stationId) => ({ stationId, startDate: dates.startDate, endDate: dates.endDate, expiresAt })), { maxJobs, intervalMaxAgeMs, publicTtlMs: ttlMs });
   }
 
   // Internal bulk admission for active reminder collection. Callers validate dates
   // and filter against a trusted catalog first; no reminder rows are mutated here.
   async function enqueueIntervalJobs(tasks, { maxJobs = 300, lease, priority = 0,
     reservedPriorityJobs = maxJobs >= 40 ? 40 : 0, priorityTtlMs = 45 * 60_000,
-    intervalMaxAgeMs = DEFAULT_SNAPSHOT_FRESHNESS.intervalMaxAgeMs } = {}) {
+    intervalMaxAgeMs = DEFAULT_SNAPSHOT_FRESHNESS.intervalMaxAgeMs, publicTtlMs } = {}) {
     if (!tasks.length) return { requested: 0, accepted: 0, capacityLimited: false };
     if (!Number.isInteger(maxJobs) || maxJobs < 1) throw new TypeError("Invalid interval queue capacity");
     if (!Number.isFinite(intervalMaxAgeMs) || intervalMaxAgeMs <= 0) throw new TypeError("Invalid interval snapshot freshness");
+    if (publicTtlMs !== undefined && (!Number.isFinite(publicTtlMs) || publicTtlMs <= 0)) throw new TypeError("Invalid public queue lease");
     if (![0, 1].includes(priority) || !Number.isInteger(reservedPriorityJobs) || reservedPriorityJobs < 0 ||
         reservedPriorityJobs > maxJobs || !Number.isFinite(priorityTtlMs) || priorityTtlMs <= 0) {
       throw new TypeError("Invalid interval queue priority configuration");
@@ -321,6 +322,10 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
         AND ${freshJob} AND ${guard(lease)}`,
         [...freshBindings, ...guardedBindings(lease)]),
     ];
+    // Bound older public leases to the current policy once, without moving their
+    // deadline forward. Only the currently queried tasks are renewed below.
+    if (publicTtlMs !== undefined) statements.push(prepare(`UPDATE interval_query_jobs SET expires_at=?
+      WHERE priority=0 AND expires_at>? AND ${guard(lease)}`, [at+publicTtlMs,at+publicTtlMs,...guardedBindings(lease)]));
     const updateIndex = statements.length;
     statements.push(
       prepare(`UPDATE interval_query_jobs AS job SET expires_at=MAX(expires_at,

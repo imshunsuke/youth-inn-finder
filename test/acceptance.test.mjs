@@ -18,6 +18,10 @@ test("acceptance needs multi-range completion, natural expiry, recovery and a se
   assert.equal(summarize(onlyHttp,traces,options).functional,"FAIL");
   const short=summarize(samples,traces,{...options,durationMs:300_000}); assert.ok(short.gates.includes("DURATION_INCOMPLETE"));
   const unobserved=summarize(samples,[],options); assert.ok(unobserved.gates.includes("RUNTIME_OBSERVABILITY_INCOMPLETE"));
+  const warm=samples.map(s=>s.kind==="query"&&s.elapsedMs===0?{...s,fresh:90}:s);
+  assert.ok(summarize(warm,traces,options).gates.some(s=>s.startsWith("INITIAL_COLD_NOT_PROVEN")));
+  const boundary={...samples[0],startedElapsedMs:599_900,elapsedMs:600_100};
+  assert.ok(!summarize([...samples,boundary],traces,options).gates.includes("IDLE_PHASE_NOT_IDLE"));
 });
 test("rate limits, deployment drift and runtime terminations fail instead of being hidden by 200 responses",()=>{
   const {samples,traces,options}=evidence();

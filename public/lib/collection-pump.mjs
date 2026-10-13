@@ -11,7 +11,9 @@ export function createCollectionPump({ requestImpl = request, clock = () => Date
       if (inFlight) return inFlight;
       retryAt = clock() + 10_000;
       inFlight = requestImpl("/api/collection", { method: "POST", timeoutMs: 20_000 }).then((result) => {
-        retryAt = intervalRetry({ retryAfter: result.retryAfter, refreshAfterMs: 10_000 }, clock()).retryAt;
+        // Successful work already spent part of the start-to-start cooldown.
+        // Waiting another full interval after its response skips every other tick.
+        if (result.payload?.status === "throttled") retryAt = intervalRetry({ retryAfter: result.retryAfter, refreshAfterMs: 10_000 }, clock()).retryAt;
         return result.payload;
       }).catch((error) => {
         retryAt = intervalRetry({ ...error, refreshAfterMs: 60_000 }, clock()).retryAt;
