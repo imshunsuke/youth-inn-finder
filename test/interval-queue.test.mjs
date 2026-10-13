@@ -122,3 +122,49 @@ test("90-station range completes across production-size slices while visible-pag
   assert.equal(result.meta.pending, false, `the complete fresh range must eventually be returned: ${JSON.stringify(result.meta.snapshotCoverage)}`);
   assert.equal(result.data.length, 90); assert.equal(await jobCount(db), 0);
 });
+
+test("switching through three ranges gives the newest range results in the next production slice", async (t) => {
+  const { db, store, clock, items, advance } = await setup(t);
+  // Reproduce the user's 19 older jobs, 90 middle jobs and 90 current jobs.
+  for (const [date, size] of [["2026-10-18", 19], ["2026-10-16", 90], ["2026-10-15", 90]]) {
+    await store.enqueueIntervalJobs(items.slice(0, size).map(({ id }) => task(id, date)));
+    advance(1000);
+  }
+  const posted = [];
+  const report = await createCollector({ db, clock, budget: 20, maxCatalogRefreshes: 1, fetchImpl: async (_url, options) => {
+    if (options.method === "POST") posted.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({ success: true, data: options.method === "POST" ? { idleCnt: 1 } : [] }));
+  } }).run();
+  assert.equal(report.requestsUsed, 20); assert.equal(posted.length, 10);
+  for (const date of ["2026-10-18", "2026-10-16", "2026-10-15"]) {
+    assert.ok(posted.filter((item) => item.intoDate === date).length >= 3, `${date} must not wait for other city-wide ranges to drain`);
+  }
+  const current = await (await handleQueryRequest(new Request("https://finder.example.test/api/available?date=2026-10-15&endDate=2026-10-21"), { db, clock, maxIntervalJobs: 300 })).json();
+  assert.ok(current.meta.snapshotCoverage.freshStations >= 3); assert.ok(current.data.length >= 3);
+});
+
+test("a slice smaller than the number of ranges rotates by last attempt instead of starving later ranges", async (t) => {
+  const { store, clock, advance } = await setup(t, 3);
+  for (const date of ["2026-10-15", "2026-10-16", "2026-10-17", "2026-10-18"]) {
+    await store.enqueueIntervalJobs(["000", "001", "002"].map((id) => task(id, date)));
+    advance(1000);
+  }
+  const served = [];
+  for (let slice = 0; slice < 4; slice++) {
+    const [job] = await store.dueIntervalJobs(1);
+    served.push(job.start_date);
+    await store.saveIntervalBatch([known(task(job.station_id, job.start_date), clock)]);
+    advance(60_000);
+  }
+  assert.equal(new Set(served).size, 4, "each range gets a first result before any range gets its second");
+});
+
+test("range fairness preserves reminder priority and excludes jobs still in failure backoff", async (t) => {
+  const { store, clock } = await setup(t, 3);
+  await store.enqueueIntervalJobs([task("000", "2026-10-15"), task("001", "2026-10-16")]);
+  await store.saveIntervalBatch([], [{ ...task("000", "2026-10-15"), code: "UPSTREAM_TIMEOUT", failureCount: 1, nextAttemptAt: clock().getTime() + 60_000 }]);
+  await store.enqueueIntervalJobs([task("002", "2026-10-18")], { priority: 1 });
+  const due = await store.dueIntervalJobs(10);
+  assert.equal(due[0].station_id, "002"); assert.equal(due[0].priority, 1);
+  assert.ok(due.some((job) => job.station_id === "001")); assert.ok(!due.some((job) => job.station_id === "000"));
+});

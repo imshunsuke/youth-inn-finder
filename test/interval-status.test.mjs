@@ -11,7 +11,9 @@ test("rejected and partially admitted ranges never claim all work is being colle
 });
 test("queued zero-room partial data and failed observations remain distinct from no-room success", () => {
   const queued = intervalFeedback({ snapshotCoverage: coverage, collection: { status: "queued", requested: 78, accepted: 78 } });
-  assert.equal(queued.title, "区间查询已排队"); assert.match(queued.description, /陆续显示/);
+  assert.equal(queued.title, "已更新部分驿站"); assert.match(queued.description, /陆续显示/);
+  const cold = intervalFeedback({ snapshotCoverage: { ...coverage, freshStations: 0 }, collection: { status: "queued", requested: 90, accepted: 90 } });
+  assert.equal(cold.title, "等待首批查询结果"); assert.match(cold.summary, /等待首批结果/);
   const failed = intervalFeedback({ snapshotCoverage: { ...coverage, lastFailedStations: 2 }, collection: { status: "queued", requested: 78, accepted: 78 } });
   assert.match(failed.title, /暂时查不到数据/); assert.match(failed.description, /查询失败/);
   assert.equal(intervalFeedback({ pending: true }).title, "区间结果尚未准备好");
