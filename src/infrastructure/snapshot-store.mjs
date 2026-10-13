@@ -201,9 +201,19 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
   }
 
   async function dueIntervalJobs(limit = 30) {
-    return allRows(prepare(`SELECT * FROM interval_query_jobs WHERE expires_at > ? AND next_attempt_at <= ?
-      ORDER BY CASE WHEN priority_until > ? THEN priority ELSE 0 END DESC,
-        next_attempt_at, created_at, station_id, start_date, end_date LIMIT ?`, [now(), now(), now(), limit]));
+    // Interleave ranges rather than draining one 90-station range first. Within
+    // each priority, ranges least recently attempted get the next turn. This also
+    // rotates fairly when there are more ranges than this slice has slots.
+    return allRows(prepare(`WITH due AS (
+      SELECT *, CASE WHEN priority_until > ? THEN priority ELSE 0 END AS effective_priority
+      FROM interval_query_jobs WHERE expires_at > ? AND next_attempt_at <= ?
+    ), ranked AS (
+      SELECT *, ROW_NUMBER() OVER (PARTITION BY effective_priority, start_date, end_date
+        ORDER BY next_attempt_at, created_at, station_id) AS range_turn FROM due
+    ) SELECT * FROM ranked AS job ORDER BY effective_priority DESC, range_turn,
+      COALESCE((SELECT MAX(sample.last_attempt_at) FROM query_intervals AS sample
+        WHERE sample.start_date=job.start_date AND sample.end_date=job.end_date), 0),
+      next_attempt_at, created_at, station_id, start_date, end_date LIMIT ?`, [now(), now(), now(), limit]));
   }
 
   async function enqueueIntervalQuery(conditions, { ttlMs = 30 * 60_000, maxJobs = 300,

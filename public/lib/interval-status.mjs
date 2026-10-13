@@ -23,9 +23,9 @@ export function intervalFeedback(meta = {}) {
   };
   const queued = collection.status === "queued" && accepted > 0;
   return {
-    title: queued ? "区间查询已排队" : "区间结果尚未准备好",
+    title: queued ? fresh ? "已更新部分驿站" : "等待首批查询结果" : "区间结果尚未准备好",
     description: `${progress}。${queued ? "待更新的驿站已排队，结果会陆续显示。" : "稍后会自动重新查询。"}无需反复点击重试。`,
-    summary: `${progress}${queued ? " · 待更新驿站已排队" : ""}`,
+    summary: `${progress}${queued ? fresh ? " · 其余驿站待更新" : " · 等待首批结果" : ""}`,
   };
 }
 
