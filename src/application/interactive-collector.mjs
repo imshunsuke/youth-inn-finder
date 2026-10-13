@@ -14,10 +14,16 @@ export async function collectInteractiveIntervals({ db, clock = () => new Date()
     throw new TypeError("Invalid interactive collection budget");
   }
   const store = createSnapshotStore({ db, clock });
+  if (!(await store.dueIntervalJobs(1)).length) return { status: "idle", attempted: 0, succeeded: 0 };
   const lease = await store.acquireInteractiveLease({ budget, cooldownMs, dailyLimit });
-  if (!lease) return { status: "throttled", attempted: 0, succeeded: 0 };
+  if (!lease) {
+    const row = await db.prepare("SELECT interactive_day,interactive_requests FROM query_collector_state WHERE name='official'").first();
+    const exhausted = row?.interactive_day === Math.floor(new Date(clock()).getTime() / 86_400_000) && row.interactive_requests >= dailyLimit;
+    return { status: "throttled", reason: exhausted ? "daily-budget" : "busy", attempted: 0, succeeded: 0 };
+  }
+  let attempted = 0;
   try {
-    const jobs = await store.dueIntervalJobs(budget);
+    const jobs = await store.dueIntervalJobs(lease.interactiveReserved);
     const client = createOfficialClient({ clock, fetchImpl, concurrency: 3, cacheTtlMs: 0, timeoutMs });
     const successes = [], failures = [];
     let next = 0;
@@ -26,6 +32,7 @@ export async function collectInteractiveIntervals({ db, clock = () => new Date()
         const job = jobs[next++];
         const task = { stationId: job.station_id, startDate: job.start_date, endDate: job.end_date };
         try {
+          attempted++;
           successes.push({ ...task, ...await client.fetchDateAvailability(task.stationId, task.startDate, task.endDate) });
         } catch (error) {
           const failureCount = job.failure_count + 1;
@@ -37,6 +44,6 @@ export async function collectInteractiveIntervals({ db, clock = () => new Date()
     await store.saveIntervalBatch(successes, failures, { lease });
     return { status: "collected", attempted: jobs.length, succeeded: successes.length, failed: failures.length };
   } finally {
-    await store.releaseLease(lease);
+    await store.releaseLease(lease, { interactiveUsed: attempted });
   }
 }

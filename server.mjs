@@ -7,11 +7,10 @@ import { createLocalDatabase } from './src/development/d1.mjs';
 import { migrateLocalDatabase } from './src/development/migrate.mjs';
 import { createApp } from './src/http/app.mjs';
 import { runScheduled } from './src/worker.mjs';
-import { collectInteractiveIntervals } from './src/application/interactive-collector.mjs';
 
 const projectRoot = fileURLToPath(new URL('.', import.meta.url));
 const publicRoot = resolve(projectRoot, 'public');
-const stateRoot = resolve(projectRoot, '.data');
+const stateRoot = resolve(process.env.STATE_DIRECTORY || resolve(projectRoot, '.data'));
 const host = process.env.HOST || '127.0.0.1';
 const port = Number(process.env.PORT ?? 3000);
 if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT 必须是有效端口');
@@ -46,12 +45,7 @@ async function assets(request) {
       { headers: { 'Content-Type': type, 'Cache-Control': 'no-cache' } });
   } catch { return new Response('Not found', { status: 404 }); }
 }
-const interactiveTasks = new Set();
-const app = createApp({ env, assetHandler: assets, onIntervalPending: () => {
-  const task = collectInteractiveIntervals({ db }).catch(() => console.error('即时房源更新暂时失败，将自动重试。'))
-    .finally(() => interactiveTasks.delete(task));
-  interactiveTasks.add(task);
-} });
+const app = createApp({ env, assetHandler: assets, interactiveCollection: true });
 let localOrigin;
 const server = createServer(async (incoming, outgoing) => {
   try {
@@ -70,7 +64,7 @@ const server = createServer(async (incoming, outgoing) => {
     headers.delete('cf-connecting-ip');
     const method = incoming.method || 'GET';
     const response = await app(new Request(new URL(incoming.url, localOrigin), {
-      method, headers, ...(['GET', 'HEAD'].includes(method) ? {} : { body: Buffer.concat(chunks) }),
+      method, headers, ...(['GET', 'HEAD'].includes(method) || length === 0 ? {} : { body: Buffer.concat(chunks) }),
     }));
     outgoing.writeHead(response.status, Object.fromEntries(response.headers));
     outgoing.end(Buffer.from(await response.arrayBuffer()));
@@ -103,9 +97,8 @@ const interval = setInterval(tick, 60_000);
 async function stop() {
   if (stopping) return;
   stopping = true; clearInterval(interval);
-  server.close();
+  await new Promise((resolve) => server.close(resolve));
   await running;
-  await Promise.allSettled([...interactiveTasks]);
   db.close();
 }
 process.on('SIGINT', stop);

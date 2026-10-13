@@ -3,6 +3,7 @@ import { handleQueryRequest } from "./query-routes.mjs";
 import { handleReminderRequest } from "./reminder-routes.mjs";
 import { validateReminderEnvironment } from "../infrastructure/mail.mjs";
 import { invitationRequired } from "../domain/reminders.mjs";
+import { collectInteractiveIntervals } from "../application/interactive-collector.mjs";
 
 export const APP_VERSION = "1.0.0";
 export function mailConfigured(env) {
@@ -14,6 +15,19 @@ export function jsonResponse(payload, status = 200, headers = {}) {
     status,
     headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers },
   });
+}
+
+async function hasBodyContent(request) {
+  if (!request.body) return false;
+  const reader = request.body.getReader(); let timer;
+  const deadline = new Promise((_, reject) => { timer = setTimeout(() => reject(new AppError("补查请求超时", { code: "REQUEST_TIMEOUT", status: 408 })), 2000); });
+  try {
+    while (true) {
+      const chunk = await Promise.race([reader.read(), deadline]);
+      if (chunk.done) return false;
+      if (chunk.value?.byteLength) return true;
+    }
+  } finally { clearTimeout(timer); await reader.cancel().catch(() => {}); }
 }
 
 function secure(response, requestId) {
@@ -31,7 +45,7 @@ function secure(response, requestId) {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-async function admitInterval(request, env, clock) {
+async function admitInterval(request, env, clock, scope = "interval") {
   if (request.headers.get("Sec-Fetch-Site") === "cross-site") {
     throw new AppError("请在本站查询连续入住", { code: "ORIGIN_REJECTED", status: 403 });
   }
@@ -43,7 +57,7 @@ async function admitInterval(request, env, clock) {
   const ip = request.headers.get("CF-Connecting-IP") || "local";
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${env.APP_SECRET}:${ip}`));
   const fingerprint = Array.from(new Uint8Array(bytes), (value) => value.toString(16).padStart(2, "0")).join("");
-    for (const [key, limit] of [[`interval:ip:${window}:${fingerprint}`, 90], [`interval:global:${window}`, 600]]) {
+  for (const [key, limit] of [[`${scope}:ip:${window}:${fingerprint}`, 300], [`${scope}:global:${window}`, 1800]]) {
     const row = await env.DB.prepare(`INSERT INTO http_rate_limits (bucket_key,count,expires_at) VALUES (?,1,?)
       ON CONFLICT(bucket_key) DO UPDATE SET count=http_rate_limits.count+1 RETURNING count`)
       .bind(key, (window + 1) * 600_000).first();
@@ -52,7 +66,8 @@ async function admitInterval(request, env, clock) {
 }
 
 export function createApp({ env = {}, clock = () => new Date(),
-  queryHandler = handleQueryRequest, reminderHandler = handleReminderRequest, assetHandler, onIntervalPending } = {}) {
+  queryHandler = handleQueryRequest, reminderHandler = handleReminderRequest, assetHandler, onIntervalPending, interactiveCollection = false,
+  collectIntervals = collectInteractiveIntervals } = {}) {
   return async function handle(request) {
     const requestId = crypto.randomUUID();
     try {
@@ -75,10 +90,18 @@ export function createApp({ env = {}, clock = () => new Date(),
       }
       if (url.pathname.startsWith("/api/")) {
         if (!env.DB) throw new AppError("服务正在准备，请稍后重试", { code: "STORAGE_UNAVAILABLE", status: 503 });
+        if (url.pathname === "/api/collection") {
+          if (request.method !== "POST") return secure(jsonResponse({ error: "请使用 POST", code: "METHOD_NOT_ALLOWED" }, 405, { Allow: "POST" }), requestId);
+          if (url.search || await hasBodyContent(request)) return secure(jsonResponse({ error: "补查无需提供参数", code: "INVALID_INPUT" }, 400), requestId);
+          if (!interactiveCollection) return secure(jsonResponse({ error: "按需补查暂不可用", code: "COLLECTION_UNAVAILABLE" }, 503), requestId);
+          await admitInterval(request, env, clock, "collection");
+          const result = await collectIntervals({ db: env.DB, clock, budget: 6 });
+          return secure(jsonResponse(result, 200, { "Retry-After": result.reason === "daily-budget" ? "60" : "10" }), requestId);
+        }
         if (url.pathname === "/api/available" && request.method === "GET" && url.searchParams.has("endDate")) {
           await admitInterval(request, env, clock);
         }
-        const options = { db: env.DB, env, clock, maxIntervalJobs: 300, onIntervalPending };
+        const options = { db: env.DB, env, clock, maxIntervalJobs: 300, onIntervalPending, interactiveCollection };
         const response = await queryHandler(request, options) ?? await reminderHandler(request, options) ??
           jsonResponse({ error: "接口不存在", code: "NOT_FOUND" }, 404);
         return secure(response, requestId);

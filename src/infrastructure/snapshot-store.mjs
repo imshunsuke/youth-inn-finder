@@ -41,8 +41,18 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
   const guard = (lease) => lease ? leaseGuard : "1 = 1";
   const guardedBindings = (lease) => lease ? fencedValues(lease) : [];
 
-  async function readCatalog(houseType = "0", { maxAgeMs = DEFAULT_SNAPSHOT_FRESHNESS.catalogMaxAgeMs } = {}) {
-    const row = await prepare("SELECT * FROM query_catalogs WHERE house_type = ?", [parseHouseType(houseType)]).first();
+  async function readCatalog(houseType = "0", { maxAgeMs = DEFAULT_SNAPSHOT_FRESHNESS.catalogMaxAgeMs, compact = false, stationId } = {}) {
+    const type = parseHouseType(houseType);
+    let row;
+    if (compact || stationId) {
+      const valid = "CASE WHEN json_valid(c.payload_json) THEN json_type(c.payload_json,'$.items')='array' ELSE 0 END";
+      row = await prepare(`SELECT c.fetched_at,c.last_attempt_at,c.last_error_code,c.payload_json IS NOT NULL AS has_payload,
+        CASE WHEN ${valid} THEN (SELECT json_group_array(json(CASE WHEN item.type='object'
+          THEN ${compact ? "json_remove(item.value,'$.officialUrl')" : "item.value"} ELSE 'null' END))
+          FROM json_each(c.payload_json,'$.items') item ${stationId ? "WHERE CASE WHEN item.type='object' THEN json_extract(item.value,'$.id') END=?" : ""}) END AS items_json
+        FROM query_catalogs c WHERE c.house_type=?`, [...(stationId ? [stationId] : []), type]).first();
+      if (row) row.payload_json = row.items_json ? `{"items":${row.items_json}}` : row.has_payload ? "null" : null;
+    } else row = await prepare("SELECT * FROM query_catalogs WHERE house_type = ?", [type]).first();
     return snapshot(row, now(), maxAgeMs, (payload) => Array.isArray(payload?.items) && payload.items.every((item) =>
       item && typeof item === "object" && typeof item.id === "string" && item.id && typeof item.name === "string"));
   }
@@ -179,7 +189,7 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
     const at = now();
     const row = await prepare(`INSERT INTO query_collector_state
       (name, lease_token, lease_until, updated_at) VALUES ('official', ?, ?, ?)
-      ON CONFLICT (name) DO UPDATE SET lease_token=excluded.lease_token, lease_until=excluded.lease_until, updated_at=excluded.updated_at
+      ON CONFLICT (name) DO UPDATE SET lease_token=excluded.lease_token, lease_until=excluded.lease_until, updated_at=excluded.updated_at, collection_wait_until=0
       WHERE query_collector_state.lease_until <= ? RETURNING *`, [token, at + leaseMs, at, at]).first();
     return row ? { token, expiresAt: row.lease_until, calendarCursor: row.calendar_cursor,
       catalogCursor: row.catalog_cursor, reminderCursor: row.reminder_cursor } : null;
@@ -189,22 +199,30 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
     return Boolean(await prepare(`SELECT 1 AS owned WHERE ${leaseGuard}`, fencedValues(lease)).first());
   }
 
+  async function requestCollectionTurn(ttlMs = 30_000) {
+    await prepare("UPDATE query_collector_state SET collection_wait_until=MAX(collection_wait_until,?) WHERE name='official'", [now() + ttlMs]).run();
+  }
+
   // The same fenced lease as Cron keeps total upstream concurrency bounded across
   // all visitors. Reserve quota atomically before fetching; failures also count.
   async function acquireInteractiveLease({ budget = 9, cooldownMs = 10_000, dailyLimit = 6000, leaseMs = 60_000 } = {}) {
     const at = now(), day = Math.floor(at / 86_400_000), token = globalThis.crypto.randomUUID();
     const row = await prepare(`INSERT INTO query_collector_state
-      (name,lease_token,lease_until,updated_at,interactive_started_at,interactive_day,interactive_requests)
-      VALUES ('official',?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET
+      (name,lease_token,lease_until,updated_at,interactive_started_at,interactive_day,interactive_requests,interactive_reserved)
+      VALUES ('official',?,?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET
       lease_token=excluded.lease_token,lease_until=excluded.lease_until,updated_at=excluded.updated_at,
       interactive_started_at=excluded.interactive_started_at,interactive_day=excluded.interactive_day,
+      interactive_reserved=CASE WHEN query_collector_state.interactive_day=?
+        THEN MIN(?,?-query_collector_state.interactive_requests) ELSE ? END,
       interactive_requests=CASE WHEN query_collector_state.interactive_day=?
-        THEN query_collector_state.interactive_requests+? ELSE ? END
+        THEN MIN(?,query_collector_state.interactive_requests+?) ELSE ? END
       WHERE query_collector_state.lease_until<=?
         AND query_collector_state.interactive_started_at<=?
-        AND (query_collector_state.interactive_day<>? OR query_collector_state.interactive_requests+?<=?)
-      RETURNING lease_until`, [token,at+leaseMs,at,at,day,budget,day,budget,budget,at,at-cooldownMs,day,budget,dailyLimit]).first();
-    return row ? { token, expiresAt: row.lease_until } : null;
+        AND query_collector_state.collection_wait_until<=?
+        AND (query_collector_state.interactive_day<>? OR query_collector_state.interactive_requests<?)
+      RETURNING lease_until,interactive_reserved,interactive_day`,
+    [token,at+leaseMs,at,at,day,budget,budget,day,budget,dailyLimit,budget,day,dailyLimit,budget,budget,at,at-cooldownMs,at,day,dailyLimit]).first();
+    return row ? { token, expiresAt: row.lease_until, interactiveReserved: row.interactive_reserved, interactiveDay: row.interactive_day } : null;
   }
 
   async function advanceCursor(lease, { calendarCursor, catalogCursor, reminderCursor } = {}) {
@@ -214,8 +232,12 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
     [calendarCursor ?? null, catalogCursor ?? null, reminderCursor ?? null, now(), ...fencedValues(lease)]).run()) > 0;
   }
 
-  async function releaseLease(lease) {
-    return changes(await prepare("UPDATE query_collector_state SET lease_token=NULL, lease_until=0 WHERE name='official' AND lease_token=?", [lease.token]).run()) > 0;
+  async function releaseLease(lease, { interactiveUsed } = {}) {
+    const refund = Number.isInteger(interactiveUsed) && Number.isInteger(lease.interactiveReserved)
+      ? Math.max(0, lease.interactiveReserved - interactiveUsed) : 0;
+    return changes(await prepare(`UPDATE query_collector_state SET lease_token=NULL, lease_until=0,interactive_reserved=0,
+      interactive_requests=CASE WHEN interactive_day=? THEN MAX(0,interactive_requests-?) ELSE interactive_requests END
+      WHERE name='official' AND lease_token=?`, [lease.interactiveDay ?? -1, refund, lease.token]).run()) > 0;
   }
 
   async function dueIntervalJobs(limit = 30) {
@@ -245,7 +267,7 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
       throw invalidInput("入住需在未来 90 天内，连续入住不超过 30 晚", "endDate");
     }
     if (!Number.isFinite(ttlMs) || ttlMs <= 0 || !Number.isInteger(maxJobs) || maxJobs < 1) throw new TypeError("Invalid interval queue configuration");
-    const catalog = await readCatalog(query.houseType, { maxAgeMs: catalogMaxAgeMs });
+    const catalog = await readCatalog(query.houseType, { maxAgeMs: catalogMaxAgeMs, compact: true });
     if (catalog.status !== "fresh") throw snapshotUnavailable(catalog.status);
     const candidates = [...new Set(filterListings(catalog.payload.items, query).map((item) => String(item.id)))];
     const snapshots = observations ? new Map(observations.filter((item) => item.kind === "interval").map((item) => [item.stationId, item]))
@@ -361,7 +383,7 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
 
   return Object.freeze({ readCatalog, readCatalogRows, readCalendarRows, readCollectorCatalogRows,
     readCollectorCalendarRows, readCalendars, readIntervals,
-    saveCatalog, recordCatalogFailure, saveCalendarBatch, saveIntervalBatch, acquireLease, acquireInteractiveLease, hasLease,
+    saveCatalog, recordCatalogFailure, saveCalendarBatch, saveIntervalBatch, acquireLease, acquireInteractiveLease, requestCollectionTurn, hasLease,
     advanceCursor, releaseLease, dueIntervalJobs, enqueueIntervalQuery, enqueueIntervalJobs, reconcileIntervalPriorities, pruneExpiredJobs });
 }
 
@@ -377,7 +399,7 @@ export function projectCollectorListings(items) {
  * Missing/stale/invalid observations throw into queryService's unknown/partial path;
  * diagnostics retains their old timestamps without exposing expired counts as current.
  */
-export function createSnapshotClient({ db, store, clock = () => new Date(), ...options } = {}) {
+export function createSnapshotClient({ db, store, clock = () => new Date(), compactCatalog = false, ...options } = {}) {
   store ??= createSnapshotStore({ db, clock });
   const freshness = { ...DEFAULT_SNAPSHOT_FRESHNESS, ...options };
   const catalogs = new Map();
@@ -387,7 +409,7 @@ export function createSnapshotClient({ db, store, clock = () => new Date(), ...o
   const intervals = new Map();
   async function fetchListings({ houseType = "0" } = {}) {
     const type = parseHouseType(houseType);
-    if (!catalogs.has(type)) catalogs.set(type, store.readCatalog(type, { maxAgeMs: freshness.catalogMaxAgeMs }));
+    if (!catalogs.has(type)) catalogs.set(type, store.readCatalog(type, { maxAgeMs: freshness.catalogMaxAgeMs, compact: compactCatalog }));
     const entry = await catalogs.get(type);
     if (entry.status !== "fresh") throw snapshotUnavailable(entry.status);
     entry.payload.items.forEach((item) => stationIds.add(String(item.id)));

@@ -32,11 +32,13 @@ export function createCollector({ db, clock = () => new Date(), fetchImpl = (...
   budget = 30, concurrency = 3, maxCatalogRefreshes = 2, leaseMs = 180_000, timeoutMs = 12_000,
   catalogRefreshMs = 15 * 60_000, calendarRefreshMs = 15 * 60_000,
   intervalRefreshMs = 15 * 60_000, maxIntervalJobs = 300, baseUrl,
+  leaseWaitMs = 0, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 } = {}) {
   if (!Number.isInteger(budget) || budget < 1 || budget > 30) throw new TypeError("Collector budget must be 1–30");
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 3) throw new TypeError("Collector concurrency must be 1–3");
   if (!Number.isInteger(maxCatalogRefreshes) || maxCatalogRefreshes < 1 || maxCatalogRefreshes > 2) throw new TypeError("Collector catalog refresh limit must be 1–2");
   if (!Number.isFinite(leaseMs) || leaseMs < 1) throw new TypeError("Invalid collector lease duration");
+  if (!Number.isFinite(leaseWaitMs) || leaseWaitMs < 0 || leaseWaitMs > 25_000 || typeof wait !== "function") throw new TypeError("Invalid collector wait budget");
   const store = createSnapshotStore({ db, clock });
   const now = () => clockDate(clock).getTime();
 
@@ -81,7 +83,13 @@ export function createCollector({ db, clock = () => new Date(), fetchImpl = (...
   }
 
   async function run() {
-    const lease = await store.acquireLease({ leaseMs });
+    let lease = await store.acquireLease({ leaseMs });
+    const deadline = now() + leaseWaitMs;
+    if (!lease && leaseWaitMs > 0) await store.requestCollectionTurn(leaseWaitMs + 5000);
+    while (!lease && now() < deadline) {
+      await wait(Math.min(2500, deadline - now()));
+      lease = await store.acquireLease({ leaseMs });
+    }
     if (!lease) return { status: "skipped", reason: "lease-held", requestsUsed: 0, budget };
     let requestsUsed = 0;
     const client = createOfficialClient({ clock, concurrency, cacheTtlMs: 0, timeoutMs, ...(baseUrl ? { baseUrl } : {}),

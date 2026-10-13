@@ -9,6 +9,8 @@
 | `GET /api/health` | 版本、时间、邮件配置与邀请模式；也支持 `HEAD` |
 | `GET /api/calendar` | 日历聚合、各站日期可用性，返回 `{ startDate, days, stations, meta }` |
 | `GET /api/available` | 单日或真实连续入住的已知可用房源，返回 `{ data, meta }` |
+| `GET /api/station` | 按 `stationId` 和可选 `houseType` 读取单站完整详情 |
+| `POST /api/collection` | 无参数、无请求体，补查已入队任务；固定最多 6 次官网请求 |
 | `GET /api/nearest` | 按直线距离排列目录中的站点，返回 `{ data, meta }`；不代表这些站点有房 |
 | `POST /api/reminders` | 新建提醒；邀请模式下需有效邀请码或已绑定成员的 Bearer 凭据 |
 | `POST /api/reminders/verify` | 主动确认验证邮件中的令牌，启用提醒并返回管理令牌 |
@@ -17,7 +19,7 @@
 | `PATCH /api/reminders/:id` | Bearer 授权后修改自己的条件、暂停或恢复 |
 | `DELETE /api/reminders/:id` | Bearer 授权后删除自己的提醒；网页执行前要求确认 |
 
-查询接口只支持 `GET`。带请求体的提醒写入请求使用 `Content-Type: application/json`，请求体最大 8 KiB；提醒请求携带 `Origin` 时必须来自本站。不要把邀请码或管理令牌放入查询字符串。
+查房和详情接口只支持 `GET`；补查仅接受无请求体的 `POST /api/collection`。带请求体的提醒写入请求使用 `Content-Type: application/json`，请求体最大 8 KiB；提醒请求携带 `Origin` 时必须来自本站。不要把邀请码或管理令牌放入查询字符串。
 
 ## 查询参数
 
@@ -33,6 +35,7 @@
 | `sort` | 无坐标时为 `availability`，有坐标时为 `distance`；还支持 `name` |
 | `lat` / `lon` | 必须同时提供；纬度 `[-90,90]`，经度 `[-180,180]`；`nearest` 必填，距离排序也需要坐标 |
 | `startDate` / `days` | `calendar` 使用；起始日默认上海今天，天数默认 `21`，整数 `1–31`；起始日兼容 `date` |
+| `includeOfficialDetails` | 默认 `true`；`false` 省略列表中较大的 `officialUrl`，可通过 `GET /api/station?stationId=…` 按需获取 |
 | `includeDayItems` | `calendar` 默认 `true`；`false` 省略重复的 `days[].items`，站点、聚合和未知状态不变 |
 | `date` / `endDate` | `available` 使用；入住日默认上海今天，可选离店日，格式均为 `YYYY-MM-DD`；离店必须晚于入住 |
 
@@ -69,7 +72,7 @@
 - `coverage`：执行站点观测时，`successfulStations + failedStations = totalStations`；`unknownStations` 与失败有交集，不能再次相加作分母。未开放日期另有 `notOpenStations`。
 - `snapshotCoverage`：快照层面的新鲜、缺失、过期和无效数量；`lastFailedStations` 是另外的历史失败指标，也不能重复加入分母。
 
-HTTP 响应读取持久快照，不等待全市逐站查询。缺少目录时返回 `503 SNAPSHOT_PENDING`，过期目录返回 `503 SNAPSHOT_STALE`；缺少部分站点快照时可返回 `200` 和部分结果。缺少连续入住快照时会有限入队，`meta.collection` 说明是否已排队或容量受限。线上通过 `waitUntil` 另外启动最多 9 个驿站的补查；新鲜快照会由下一次响应展示。按 `Retry-After` 或 `meta.refreshAfterMs` 等待，按需补查时为 10 秒，目录准备等情况为 60 秒。不保证立即完成；默认快照满 20 分钟后视为过期。
+HTTP 响应读取持久快照，不等待全市逐站查询。缺少目录时返回 `503 SNAPSHOT_PENDING`，过期目录返回 `503 SNAPSHOT_STALE`；缺少部分站点快照时可返回 `200` 和部分结果。缺少连续入住快照时会有限入队，`meta.collection` 说明是否已排队或容量受限。线上返回固定的 `meta.collection.advanceUrl`。客户端用无请求体的 `POST /api/collection` 启动一次最多 6 个驿站的独立补查，再读查询结果；不会在一次调用里同时解析全市目录和采集。按 `Retry-After` 或 `meta.refreshAfterMs` 等待，按需补查时为 10 秒，目录准备等情况为 60 秒。不保证立即完成；默认快照满 20 分钟后视为过期。
 
 区间查询只为缺失、过期或无效快照的站点入队，成功的普通查询任务释放名额并保留快照；提醒任务仍定期刷新。`collection.requested` 是本次仍需更新的站点数，`accepted` 包括新入队和已有的待处理任务。`status=capacity-limited` 表示其中有站点未能入队，即使 `accepted` 大于 0；`queued` 表示待更新站点全部已排队。HTTP `200` 和 `pending=true` 只表示返回了部分结果，不能据此断言后台正在执行该查询。页面展示 `snapshotCoverage.freshStations/totalStations` 的快照更新进度；失败、排队和未入队分别提示，参数错误不会自动无限重试。
 

@@ -108,20 +108,21 @@ test("validated pending query schedules work without delaying the response; read
   assert.equal(tasks.length, 1);
 });
 
-test("production Worker registers collection with waitUntil and shares its results on the next response", async (t) => {
+test("production Worker separates snapshot reads from a bounded collection invocation", async (t) => {
   const { db, store, items } = await fixture(t, 1);
   const now = new Date();
   const date = new Date(now.getTime() + 3 * 86_400_000).toISOString().slice(0, 10);
   const end = new Date(now.getTime() + 5 * 86_400_000).toISOString().slice(0, 10);
   await store.saveCatalog("0", { items, fetchedAt: now.toISOString() });
   t.mock.method(globalThis, "fetch", positive);
-  const tasks = [], env = { DB: db, APP_SECRET: "unit-test-secret-with-at-least-32-bytes" };
-  const context = { waitUntil(task) { tasks.push(task); } };
+  const env = { DB: db, APP_SECRET: "unit-test-secret-with-at-least-32-bytes" };
   const req = () => new Request(`https://finder.example.test/api/available?date=${date}&endDate=${end}`);
-  const first = await worker.fetch(req(), env, context);
-  assert.equal((await first.json()).meta.pending, true); assert.equal(tasks.length, 1);
-  await Promise.all(tasks);
-  const second = await worker.fetch(req(), env, context);
+  const first = await worker.fetch(req(), env);
+  const pending = await first.json();
+  assert.equal(pending.meta.pending, true); assert.equal(pending.meta.collection.advanceUrl, "/api/collection");
+  const collected = await worker.fetch(new Request("https://finder.example.test/api/collection", { method: "POST" }), env);
+  assert.equal((await collected.json()).succeeded, 1);
+  const second = await worker.fetch(req(), env);
   const payload = await second.json();
-  assert.equal(payload.meta.pending, false); assert.equal(payload.data.length, 1); assert.equal(tasks.length, 1);
+  assert.equal(payload.meta.pending, false); assert.equal(payload.data.length, 1);
 });

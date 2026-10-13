@@ -4,14 +4,13 @@ import { createQueryService } from "./application/query-service.mjs";
 import { createSnapshotClient } from "./infrastructure/snapshot-store.mjs";
 import { runMonitor } from "./application/monitor.mjs";
 import { createReminderStore } from "./infrastructure/reminder-store.mjs";
-import { collectInteractiveIntervals } from "./application/interactive-collector.mjs";
 
 export async function runScheduled(env, { clock = () => new Date(), fetchImpl = (...args) => globalThis.fetch(...args), phase = "all" } = {}) {
   if (!env.DB) return { disabled: true, reason: "storage-unavailable" };
   const result = {};
   if (["all", "collection"].includes(phase)) {
     try {
-      result.collection = await createCollector({ db: env.DB, clock, fetchImpl, budget: 20, maxCatalogRefreshes: 1 }).run();
+      result.collection = await createCollector({ db: env.DB, clock, fetchImpl, budget: 20, maxCatalogRefreshes: 1, leaseWaitMs: 25_000 }).run();
       const { status, requestsUsed, catalogs, calendars, intervals } = result.collection;
       console.info(JSON.stringify({ event: "collection_summary", status, requestsUsed, catalogs, calendars, intervals }));
     } catch {
@@ -32,12 +31,10 @@ export async function runScheduled(env, { clock = () => new Date(), fetchImpl = 
 }
 
 export default {
-  async fetch(request, env, context) {
-    const onIntervalPending = context?.waitUntil ? () => context.waitUntil(
-      collectInteractiveIntervals({ db: env.DB }).catch(() => {
-        console.error(JSON.stringify({ event: "interactive_collection_failed", code: "COLLECTION_ERROR" }));
-      })) : undefined;
-    return createApp({ env, onIntervalPending })(request);
+  async fetch(request, env) {
+    const response = await createApp({ env, interactiveCollection: true })(request);
+    if (env.CF_VERSION_METADATA?.id) response.headers.set("X-Deployment-Id", env.CF_VERSION_METADATA.id);
+    return response;
   },
   async scheduled(controller, env) {
     const phase = controller.cron === "*/2 * * * *" ? "collection" : controller.cron === "0 19 * * *" ? "cleanup" : "monitor";
