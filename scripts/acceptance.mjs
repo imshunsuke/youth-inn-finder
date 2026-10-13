@@ -86,15 +86,16 @@ export function summarize(samples, traces, { durationMs, expectedDurationMs, idl
       terminations: currentTraces.filter((s)=>s.outcome === "exceededCpu" || s.outcome === "exceededMemory").length,byPath } };
 }
 
-export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acceptance", tail = false } = {}) {
+export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acceptance", tail = false, offset = 12 } = {}) {
   const base = new URL(baseUrl);
   if (base.username || base.password || base.search || base.hash || base.pathname !== "/" ||
       !(base.protocol === "https:" || base.protocol === "http:" && ["127.0.0.1", "localhost"].includes(base.hostname))) throw new Error("Use a public HTTPS origin or a local development origin");
   if (!Number.isFinite(minutes) || minutes < 70 || minutes > 90) throw new Error("Acceptance duration must be 70–90 minutes");
+  if (!Number.isInteger(offset) || offset<2 || offset>60) throw new Error("Date offset must be 2–60 days");
   const root = resolve(output); await mkdir(root, { recursive: true });
   await writeFile(resolve(root,"samples.jsonl"),"",{flag:"wx"});
   await writeFile(resolve(root,"runtime.jsonl"),"",{flag:"wx"});
-  const started = Date.now(), today = todayInShanghai(), dates = [12,13,14].map((offset)=>addDays(today,offset)), endDate=addDays(today,15);
+  const started = Date.now(), today = todayInShanghai(), dates = [offset,offset+1,offset+2].map((days)=>addDays(today,days)), endDate=addDays(today,offset+3);
   const samples = [], traces = [], suppressedUntil = new Map(); let expectedDeployment, tailChild, tailBuffer = "", lastMinute = -1, stopped = false;
   const stop=()=>{stopped=true;}; process.once("SIGINT",stop); process.once("SIGTERM",stop);
   const metadata = { startedAt: new Date(started).toISOString(), baseUrl: base.origin, dates, endDate, minutes,
@@ -165,7 +166,7 @@ export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acc
 if (process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   const options={};
   for(let i=2;i<process.argv.length;i++) { const key=process.argv[i]; if(key==="--tail") options.tail=true;
-    else if(["--url","--minutes","--output"].includes(key)) { const value=process.argv[++i]; options[key==="--url"?"baseUrl":key.slice(2)]=key==="--minutes"?Number(value):value; }
+    else if(["--url","--minutes","--output","--offset"].includes(key)) { const value=process.argv[++i]; options[key==="--url"?"baseUrl":key.slice(2)]=["--minutes","--offset"].includes(key)?Number(value):value; }
     else throw new Error("Unknown acceptance option"); }
   const report=await runAcceptance(options); if(report.functional!=="PASS") process.exitCode=1;
 }

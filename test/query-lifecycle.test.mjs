@@ -131,6 +131,22 @@ test("cache expires at its exact boundary without relabelling old positive count
   assert.equal((await read()).data.length, 0);
 });
 
+test("abandoned public ranges release slots after five minutes; active queries renew only their own work", async (t) => {
+  const { db, clock, store, advance } = await fixture(t);
+  const task=(stationId)=>({stationId,startDate:"2026-10-20",endDate:"2026-10-23",expiresAt:clock().getTime()+1800_000});
+  await store.enqueueIntervalJobs([task("abandoned")]);
+  await store.enqueueIntervalJobs([task("reminder")],{priority:1});
+  await store.saveIntervalBatch([{...task("archive"),availabilityStatus:"known",availableCount:2,fetchedAt:clock().toISOString()}]);
+  await store.enqueueIntervalJobs([{...task("current"),expiresAt:clock().getTime()+300_000}],{publicTtlMs:300_000});
+  advance(240_000);
+  await store.enqueueIntervalJobs([{...task("current"),expiresAt:clock().getTime()+300_000}],{publicTtlMs:300_000});
+  advance(60_001); await store.pruneExpiredJobs();
+  const due=(await store.dueIntervalJobs()).map(x=>x.station_id);
+  assert.ok(!due.includes("abandoned")); assert.ok(due.includes("current")); assert.ok(due.includes("reminder"));
+  assert.equal((await store.readIntervals(["archive"],"2026-10-20","2026-10-23")).get("archive").payload.availableCount,2);
+  assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM interval_query_jobs").first()).n,2);
+});
+
 test("ninety simulated minutes: three city ranges share a queue, survive faults and recover after 25 minutes away", async (t) => {
   const { db, store, clock, advance } = await fixture(t);
   const items = Array.from({ length: 90 }, (_, index) => ({ id: String(index).padStart(3, "0"), name: `驿站${index}`, isOnShelf: true }));
