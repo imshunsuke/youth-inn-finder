@@ -136,3 +136,18 @@ test("calendar history is display-only and disappears at the one-hour hard limit
   assert.equal(body.stations[0].historicalAvailability['2026-10-15'].availableCount,8);assert.equal(body.stations[0].fetchedAt,old);
   assert.equal(body.stations[1].historicalAvailability,undefined);
 });
+
+test('cold interval admission reuses the already validated filtered catalog',async(t)=>{
+  const {db,store,clock}=await setup(t);await store.saveCatalog('0',{items:[station('a'),station('b')],fetchedAt:clock().toISOString()});
+  let catalogReads=0;const proxy={prepare(sql){if(sql.includes('FROM query_catalogs'))catalogReads++;return db.prepare(sql);},batch:(...args)=>db.batch(...args)};
+  const response=await handleQueryRequest(request('/api/available?date=2026-10-15&endDate=2026-10-18&stationId=a&includeOfficialDetails=false'),{db:proxy,clock});
+  const body=await response.json();assert.equal(response.status,200);assert.equal(body.meta.collection.accepted,1);
+  assert.equal(catalogReads,1);assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM interval_query_jobs').first()).n,1);
+});
+test('a failed bulk availability read returns a retryable service error instead of healthy 200 with zero observations',async(t)=>{
+  const {db,store,clock}=await setup(t);await store.saveCatalog('0',{items:[station('a'),station('b')],fetchedAt:clock().toISOString()});
+  const proxy={prepare(sql){return {bind(...values){const statement=db.prepare(sql).bind(...values);return sql.includes('FROM query_intervals WHERE')?{...statement,all:async()=>{throw new Error('PRIVATE_D1_READ_ERROR');}}:statement;}};},batch:(...args)=>db.batch(...args)};
+  const response=await handleQueryRequest(request('/api/available?date=2026-10-15&endDate=2026-10-18&preview=true'),{db:proxy,clock});
+  assert.equal(response.status,500);assert.equal(response.headers.get('X-Snapshot-Valid-Until'),null);
+  assert.doesNotMatch(await response.text(),/PRIVATE_D1_READ_ERROR/);
+});
