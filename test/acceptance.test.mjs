@@ -9,8 +9,9 @@ function evidence() {
   }
   for(const elapsedMs of [1200_000,1800_000]) samples.push({kind:"calendar",elapsedMs,latestSample:String(elapsedMs),http:200,durationMs:100,deployment});
   for(let elapsedMs=0;elapsedMs<=4200_000;elapsedMs+=60_000) samples.push({kind:"health",elapsedMs,http:200,durationMs:100,deployment});
-  const traces=Array.from({length:20},()=>({deployment,outcome:"ok",cpuMs:8}));
-  const options={durationMs:4200_000,expectedDurationMs:4200_000,idleStartMs:600_000,idleEndMs:2100_000,expectedDeployment:deployment};
+  const startedAtMs=Date.parse("2026-10-14T00:00:00Z");
+  const traces=Array.from({length:71},(_,i)=>({deployment,outcome:"ok",cpuMs:8,at:startedAtMs+i*60_000}));
+  const options={durationMs:4200_000,expectedDurationMs:4200_000,idleStartMs:600_000,idleEndMs:2100_000,expectedDeployment:deployment,startedAtMs};
   return {samples,traces,options};
 }
 test("acceptance needs multi-range completion, natural expiry, recovery and a second cache lifetime",()=>{
@@ -67,11 +68,22 @@ test("performance mode cannot pass a minute-scale cold query by using the old te
 
 test('discovery acceptance separately requires a fast catalog and preserves expiry tests for non-warmed ranges',async()=>{
   const {DISCOVERY_CRITERIA}=await import('../scripts/acceptance.mjs');const {samples,traces,options}=evidence();
-  const catalogs=Array.from({length:70},(_,i)=>({kind:'catalog',elapsedMs:i*60_000,http:200,durationMs:200,deployment}));
+  const catalogs=["catalog","page"].flatMap(kind=>Array.from({length:70},(_,i)=>({kind,elapsedMs:i*60_000,http:200,durationMs:200,deployment})));
   const warmedDate='2026-10-26';
   const input=samples.map(x=>x.kind==='query'&&x.date===warmedDate&&x.elapsedMs===2100_000?{...x,fresh:30,stale:60}:x);
   const result=summarize([...input,...catalogs],traces,{...options,criteria:DISCOVERY_CRITERIA,warmedDate});assert.equal(result.functional,'PASS');
   assert.equal(summarize(input,traces,{...options,criteria:DISCOVERY_CRITERIA,warmedDate}).functional,'FAIL');
   const bad=input.map(x=>x.kind==='query'&&x.date==='2026-10-27'&&x.elapsedMs===2100_000?{...x,fresh:30}:x);
   assert.ok(summarize([...bad,...catalogs],traces,{...options,criteria:DISCOVERY_CRITERIA,warmedDate}).gates.some(x=>x==='NATURAL_EXPIRY_NOT_PROVEN:2026-10-27'));
+});
+
+test('a tail that stops after five minutes cannot pass a seventy-minute observation even with enough early events',()=>{
+  const {samples,traces,options}=evidence();
+  const early=traces.filter(x=>x.at<=options.startedAtMs+300_000);
+  while(early.length<25)early.push({...early[0]});
+  const report=summarize(samples,early,options);
+  assert.ok(report.gates.includes('RUNTIME_SAMPLING_GAP'));assert.ok(report.maxRuntimeGapMs>3_600_000);
+  const gap=traces.filter(x=>x.at<options.startedAtMs+1200_000||x.at>options.startedAtMs+1800_000);
+  assert.ok(summarize(samples,gap,options).gates.includes('RUNTIME_SAMPLING_GAP'));
+  assert.equal(summarize(samples,traces,options).functional,'PASS');
 });
