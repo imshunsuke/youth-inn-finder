@@ -18,17 +18,22 @@ const percentile = (values, p) => values.length ? [...values].sort((a,b) => a-b)
 export function safeTrace(event) {
   let path = "other";
   try { const candidate = new URL(event.event?.request?.url).pathname; if (paths.has(candidate)) path = candidate; } catch {}
-  let collection; const count=(n)=>Number.isInteger(n)&&n>=0&&n<=1000?n:null;
+  let collection, d1; const count=(n)=>Number.isInteger(n)&&n>=0&&n<=1000?n:null;
+  const usageCount=(n)=>Number.isSafeInteger(n)&&n>=0&&n<=1_000_000_000?n:null;
   for (const log of event.logs ?? []) for (const message of log.message ?? []) {
     if (typeof message !== "string") continue;
     try { const p=JSON.parse(message); if(p.event === "collection_summary") collection={status:["collected","skipped","lease-lost"].includes(p.status)?p.status:"unknown",
       requests:count(p.requestsUsed), calendars:count(p.calendars?.succeeded), intervals:count(p.intervals?.succeeded)};
-      else if(p.event === "collection_failed") collection={status:"failed"}; } catch {}
+      else if(p.event === "collection_failed") collection={status:"failed"};
+      else if(p.event === "d1_usage") d1={phase:["fetch","collection","monitor","cleanup"].includes(p.phase)?p.phase:"unknown",
+        statements:usageCount(p.statements),rowsRead:usageCount(p.rowsRead),rowsWritten:usageCount(p.rowsWritten),
+        missingMeta:usageCount(p.missingMeta),failures:usageCount(p.failures),complete:p.complete===true}; } catch {}
   }
   return { at: event.eventTimestamp, path, collection, cron: ["*/2 * * * *", "* * * * *", "0 19 * * *"].includes(event.event?.cron) ? event.event.cron : undefined,
     deployment: /^[a-f0-9-]{36}$/.test(event.scriptVersion?.id ?? "") ? event.scriptVersion.id : undefined,
     outcome: ["ok", "exception", "exceededCpu", "exceededMemory", "canceled", "unknown"].includes(event.outcome) ? event.outcome : "unknown",
-    cpuMs: Number.isFinite(event.cpuTime) ? event.cpuTime : null, wallMs: Number.isFinite(event.wallTime) ? event.wallTime : null };
+    cpuMs: Number.isFinite(event.cpuTime) ? event.cpuTime : null, wallMs: Number.isFinite(event.wallTime) ? event.wallTime : null,
+    ...(d1?{d1}: {}) };
 }
 
 export function inspectSnapshot(p, at = Date.now()) {
