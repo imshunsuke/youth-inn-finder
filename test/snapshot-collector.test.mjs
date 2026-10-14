@@ -190,3 +190,31 @@ test('an expired completion cannot save data or release a newer lease, including
  const db=await applyMigrations(createTestDb());t.after(()=>db.close());let at=Date.now();const clock=()=>new Date(at),store=createSnapshotStore({db,clock});const old=await store.acquireLease({leaseMs:1});at+=2;const current=await store.acquireLease();
  const ok=await store.finishCollection(old,{calendars:[{ok:true,stationId:'one',calendar:{'2026-10-20':{availabilityStatus:'known',availableCount:2}},fetchedAt:clock().toISOString()}],cursors:{calendarCursor:'wrong'}});assert.equal(ok,false);assert.equal((await store.readCalendars(['one'])).get('one').status,'missing');assert.equal(await store.hasLease(current),true);await store.releaseLease(current);
 });
+
+test('recent-range warming is capped, uses only spare slots, and expires without visitors',async(t)=>{
+  const {db,store,clock,advance}=await setup(t);
+  const items=Array.from({length:10},(_,i)=>({...station(i),isOnShelf:true}));
+  for(const type of ['0','1']) await store.saveCatalog(type,{items,fetchedAt:clock().toISOString()});
+  await store.saveCalendarBatch(items.map(x=>({stationId:x.id,calendar:{},fetchedAt:clock().toISOString()})));
+  await store.rememberWarmRange({date:'2026-10-15',endDate:'2026-10-18',onlyOnShelf:true});
+  const calls=[];const fetchImpl=async(url,options)=>{calls.push({url,body:options.body});return officialResponse({idleCnt:2});};
+  const first=await createCollector({db,clock,fetchImpl,budget:6}).run();assert.equal(first.warmed,3);assert.equal(first.requestsUsed,3);
+  const second=await createCollector({db,clock,fetchImpl,budget:6}).run();assert.equal(second.warmed,3);
+  assert.equal(new Set(calls.map(x=>JSON.parse(x.body).houseId)).size,6);
+  await store.rememberWarmRange({date:'2026-10-16',endDate:'2026-10-19'});
+  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM query_warm_ranges').first()).n,1);
+  advance(31*60_000);calls.length=0;
+  await createCollector({db,clock,fetchImpl:async(url)=>{calls.push(url);return officialResponse(url.includes('housList')?items:[]);},budget:6}).run();
+  assert.equal(calls.some(x=>x.includes('idleHouseCnt')),false);
+});
+test('warming never steals a calendar or requested interval slot and failures cannot spin',async(t)=>{
+  const {db,store,clock}=await setup(t);
+  const items=Array.from({length:6},(_,i)=>({...station(i),isOnShelf:true}));
+  for(const type of ['0','1']) await store.saveCatalog(type,{items,fetchedAt:clock().toISOString()});
+  await store.rememberWarmRange({date:'2026-10-15',endDate:'2026-10-18'});
+  const fetchImpl=async(url)=>officialResponse(url.includes('calendar')?[]:{idleCnt:1});
+  const busy=await createCollector({db,clock,fetchImpl,budget:6}).run();assert.equal(busy.warmed,0);assert.equal(busy.calendars.attempted,6);
+  const failed=await createCollector({db,clock,fetchImpl:async()=>officialResponse({},503),budget:6}).run();assert.equal(failed.warmed,3);assert.equal(failed.intervals.failed,3);
+  const retry=await createCollector({db,clock,fetchImpl,budget:6}).run();assert.equal(retry.warmed,3);
+  const immediate=await createCollector({db,clock,fetchImpl,budget:6}).run();assert.equal(immediate.warmed,0);
+});

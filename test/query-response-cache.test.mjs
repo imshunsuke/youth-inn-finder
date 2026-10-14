@@ -32,3 +32,12 @@ test('cache hits still pass interval traffic admission and finite memory evictio
  await app(req());await app(req());assert.equal(count,1);assert.equal((await db.prepare("SELECT count FROM http_rate_limits WHERE bucket_key LIKE 'interval:global:%'").first()).count,2);
  await app(req('2026-10-21'));await app(req());assert.equal(count,3);
 });
+
+test('explicit warming cannot disappear behind a cached read, including accepted boolean aliases',async()=>{
+  const cache=createQueryResponseCache();
+  for(const warm of ['true','TRUE','1','yes','on','y']) {
+    const request=new Request('https://finder.test/api/available?preview=true&warm='+warm);
+    await cache.put(request,new Response('{}',{headers:{'X-Snapshot-Valid-Until':String(Date.now()+60_000)}}));
+    assert.equal(cache.get(request),null);
+  }
+});

@@ -3,20 +3,42 @@ import { icon, hydrateIcons, escapeHtml as esc, todayInShanghai, addDays, validD
 import { setupReminders } from "./lib/reminders.mjs";
 import { intervalFeedback, intervalRetry } from "./lib/interval-status.mjs";
 import { createCollectionPump } from "./lib/collection-pump.mjs";
-import { freshSample, favoriteForQuery, freshIntervalView } from "./lib/listing-state.mjs";
+import { freshSample, favoriteForQuery } from "./lib/listing-state.mjs";
+
+import { searchView, readCatalogCache, writeCatalogCache } from "./lib/search-view.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const today = todayInShanghai();
-const state = { date: addDays(today, 2), endDate: null, district: "", q: "", houseType: "0", onlyOnShelf: true, minCount: 1, limit: 20, sort: "availability", coordinates: null, nearestDistances: new Map(), tab: "find", favorites: readFavorites(), calendar: null, calendarKey: "", calendarLoading: false, calendarError: "", interval: null };
+const state = { date: addDays(today, 2), endDate: null, district: "", q: "", houseType: "0", onlyOnShelf: true, minCount: 1, limit: 20, sort: "availability", coordinates: null, nearestDistances: new Map(), tab: "find", favorites: readFavorites(), calendar: null, calendarKey: "", calendarLoading: false, calendarError: "", catalog: readCatalogCache("0"), catalogKey: "0", catalogError: "", interval: null };
 const calendarCache = new Map(), intervalCache = new Map();
 const collectionPump = createCollectionPump();
 let stationDetailSequence = 0, collectionNotice = "";
+let lastCatalogAttemptAt = 0, catalogSequence = 0, userQueryAt = null, paintSequence = 0, initialPaintRecorded = false;
 let calendarController, intervalController, calendarSequence = 0, intervalSequence = 0, lastRefresh = 0, intervalTimer;
 let lastCalendarAttemptAt = 0, lastIntervalAttemptAt = 0, lastIntervalAttemptKey = "", autoUpdateTimer;
 const days = Array.from({ length: 21 }, (_, index) => addDays(today, index));
 const calendarKey = () => `${today}|${state.houseType}|${state.onlyOnShelf}`;
 const intervalKey = () => JSON.stringify([state.date, state.endDate, state.houseType, state.onlyOnShelf, state.district, state.q.toLocaleLowerCase("zh-CN")]);
-const allStations = () => state.calendarKey === calendarKey() ? state.calendar?.stations || [] : [];
+const allStations = () => {
+  const rows = state.catalogKey === state.houseType && state.catalog && Date.now() - Date.parse(state.catalog.meta?.fetchedAt) < 24 * 60 * 60_000 ? state.catalog.data : state.calendarKey === calendarKey() ? state.calendar?.stations || [] : [];
+  return rows.filter((x) => !state.onlyOnShelf || x.isOnShelf === true);
+};
+function markQuery() { userQueryAt = performance.now(); $("#results").dataset.paintPending = "true"; }
+function measureResultPaint(items, source) {
+  if (!items.length && !(source.status === "open" || source.status === "not-open") || !allStations().length) return;
+  const start = userQueryAt, sequence = ++paintSequence;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (sequence !== paintSequence) return;
+    if (start !== null && start === userQueryAt) {
+      $("#results").dataset.paintPending = "false";
+      $("#results").dataset.paintMs = String(performance.now() - start);
+      $("#results").dataset.paintKind = state.endDate ? "interval" : "day";
+      performance.measure("search-results", { start, end: performance.now(), detail: { kind: state.endDate ? "interval" : "day", confirmed: source.confirmed, pending: source.pending } });
+      userQueryAt = null;
+    }
+    if (!initialPaintRecorded) { $("#results").dataset.initialPaintMs = String(performance.now()); performance.measure("initial-results", { start: 0, end: performance.now() }); initialPaintRecorded = true; }
+  }));
+}
 const stayNights = () => state.endDate ? Math.round((Date.parse(state.endDate) - Date.parse(state.date)) / 86_400_000) : null;
 const conditions = () => ({ date: state.date, ...(state.endDate ? { endDate: state.endDate } : {}), district: state.district, houseType: state.houseType, onlyOnShelf: state.onlyOnShelf, minCount: state.minCount });
 const measuredDistance = (station) => state.coordinates && state.nearestDistances.has(station.id) ? state.nearestDistances.get(station.id) : distanceKm(station, state.coordinates);
@@ -39,11 +61,12 @@ function matches(station) {
   return (!state.district || station.district === state.district) && (!keyword || [station.name, station.address, station.district, station.street].some((value) => String(value || "").toLocaleLowerCase("zh-CN").includes(keyword)));
 }
 function sortAndLimit(items) {
-  return items.filter((item) => Number.isSafeInteger(item.availableCount) && item.availableCount >= state.minCount).map((station) => ({ ...station, distanceKm: measuredDistance(station) })).sort((a, b) => {
+  const rank = { confirmed: 0, historical: 1, candidate: 2 };
+  return items.map((station) => ({ ...station, distanceKm: measuredDistance(station) })).sort((a, b) => {
     const byName = String(a.name).localeCompare(String(b.name), "zh-CN");
     if (state.sort === "name") return byName;
     if (state.sort === "distance") return (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity) || byName;
-    return (b.availableCount ?? -1) - (a.availableCount ?? -1) || byName;
+    return (rank[a.displayState] ?? 0) - (rank[b.displayState] ?? 0) || (b.availableCount ?? -1) - (a.availableCount ?? -1) || byName;
   }).slice(0, state.limit);
 }
 function dayView(date) {
@@ -53,10 +76,12 @@ function dayView(date) {
   if (!base) return { date, status: "unknown", items: [], count: null, knownCount: null, unknown: stations.length, total: stations.length };
   let unknown = 0;
   const items = [];
+  const observations = new Map((state.calendar?.stations || []).map((x) => [x.id, x]));
   for (const station of stations) {
-    const observation = station.availability?.find((day) => day.date === date);
-    if (!freshSample(station) || !observation || !["known", "open"].includes(observation.availabilityStatus) || !Number.isSafeInteger(observation.availableCount) || observation.availableCount < 0) { unknown++; continue; }
-    if (observation.availableCount >= state.minCount) items.push({ ...station, availableCount: observation.availableCount, availabilityStatus: "known" });
+    const row = observations.get(station.id);
+    const observation = row?.availability?.find((day) => day.date === date);
+    if (!freshSample(row) || !observation || !["known", "open"].includes(observation.availabilityStatus) || !Number.isSafeInteger(observation.availableCount) || observation.availableCount < 0) { unknown++; continue; }
+    if (observation.availableCount >= state.minCount) items.push({ ...station, availableCount: observation.availableCount, availabilityStatus: "known", fetchedAt: row.fetchedAt });
   }
   const knownCount = items.reduce((sum, station) => sum + station.availableCount, 0);
   return { date, status: unknown ? "unknown" : "open", items, count: unknown ? null : knownCount, knownCount, unknown, total: stations.length };
@@ -75,16 +100,20 @@ function renderCalendar() {
   $("#calendar-month").textContent = days[0].slice(0, 7) === days.at(-1).slice(0, 7) ? startMonth : `${startMonth} — ${Number(days.at(-1).slice(5, 7))} 月`;
 }
 function displaySource() {
-  if (!state.endDate) { const view = dayView(state.date); return { ...view, meta: state.calendarKey === calendarKey() ? state.calendar?.meta : null, loading: state.calendarLoading, error: state.calendarError }; }
-  const entry = state.interval?.key === intervalKey() ? state.interval : null, payload = entry?.payload;
-  const status = payload?.meta?.availabilityStatus, partial = payload?.meta?.partial || status === "partial" || status === "unknown";
-  const pending = entry?.pending || payload?.pending === true || payload?.meta?.pending === true;
-  const view = freshIntervalView(payload), items = view.items.filter(matches), total = payload?.meta?.coverage?.totalStations ?? 0;
-  return { status: status === "not-open" ? "not-open" : view.stale ? "unknown" : pending ? "pending" : payload ? partial ? "unknown" : "open" : "unknown", items, meta: payload?.meta, loading: entry?.loading, error: entry?.error, stale: view.stale, unknown: view.stale ? Math.max(0,total-items.length) : payload?.meta?.coverage?.unknownStations ?? 0, total };
+  const entry = state.interval?.key === intervalKey() ? state.interval : null;
+  const calendar = state.calendarKey === calendarKey() ? state.calendar : null;
+  const view = searchView({ stations: allStations().filter(matches), calendar, interval: entry?.payload, date: state.date, endDate: state.endDate, minCount: state.minCount });
+  return { ...view, meta: state.endDate ? entry?.payload?.meta : calendar?.meta,
+    loading: state.endDate ? entry?.loading : state.calendarLoading,
+    error: state.endDate ? entry?.error : state.calendarError };
 }
 function stationCard(station, { favorite = false } = {}) {
   const saved = state.favorites.has(station.id), known = Number.isSafeInteger(station.availableCount) && station.availableCount >= 0, distance = measuredDistance(station);
-  return `<article class="station-card"><div class="station-art">${stationArt()}<span class="room-badge">${known ? `可用 ${station.availableCount} 间` : "房源待确认"}</span><button class="bookmark${saved ? " saved" : ""}" type="button" data-favorite="${esc(station.id)}" aria-pressed="${saved}" aria-label="${saved ? "取消收藏" : "收藏"}${esc(station.name)}">${icon("bookmark")}</button><span class="illustration-note">插画示意</span></div><div class="station-body"><div class="station-category">${esc(station.district || "上海")}${distance !== null ? `<span class="distance-label">直线 ${distance.toFixed(1)} km</span>` : ""}</div><h3>${esc(station.name || "青年驿站")}</h3><p class="station-address">${esc(station.address || "地址暂未提供")}</p><div class="station-foot"><p>${favorite && !known ? "选择日期后确认房源" : "以官方申请结果为准"}</p><button class="detail-link" type="button" data-detail="${esc(station.id)}">查看详情${icon("arrow")}</button></div></div></article>`;
+  const historical = station.displayState === "historical";
+  const badge = known ? `已确认 ${station.availableCount} 间` : historical ? `上次 ${station.historicalCount} 间 · 待确认` : state.endDate ? "连续入住待确认" : "房源待确认";
+  const timestamp = sampleTime({ fetchedAt: historical ? station.historicalFetchedAt : known ? station.fetchedAt : null });
+  const note = timestamp ? `${historical ? "上次查询" : "更新于"} ${timestamp}` : favorite ? "选择日期后确认房源" : "尚未确认所选日期余房";
+  return `<article class="station-card" data-availability="${known ? "confirmed" : historical ? "historical" : "candidate"}"><div class="station-art">${stationArt()}<span class="room-badge">${esc(badge)}</span><button class="bookmark${saved ? " saved" : ""}" type="button" data-favorite="${esc(station.id)}" aria-pressed="${saved}" aria-label="${saved ? "取消收藏" : "收藏"}${esc(station.name)}">${icon("bookmark")}</button><span class="illustration-note">插画示意</span></div><div class="station-body"><div class="station-category">${esc(station.district || "上海")}${distance !== null ? `<span class="distance-label">直线 ${distance.toFixed(1)} km</span>` : ""}</div><h3>${esc(station.name || "青年驿站")}</h3><p class="station-address">${esc(station.address || "地址暂未提供")}</p><div class="station-foot"><p>${esc(note)}</p><button class="detail-link" type="button" data-detail="${esc(station.id)}">查看详情${icon("arrow")}</button></div></div></article>`;
 }
 function emptyState(title, description, action = "retry") {
   const buttons = action === "find" ? '<button class="button button-outline" type="button" data-go-find>去找驿站</button>' : action === "filters" ? '<button class="button button-outline" type="button" data-reset-filters>重置筛选</button>' : action === "reminder" ? '<button class="button button-outline" type="button" data-open-reminder>建立有房提醒</button>' : '<button class="button button-outline" type="button" data-retry>重试查询</button>';
@@ -93,9 +122,12 @@ function emptyState(title, description, action = "retry") {
 function renderResults() {
   const source = displaySource(), items = sortAndLimit(source.items), partial = ["unknown", "pending"].includes(source.status);
   const selection = state.endDate ? `${shortDate(state.date)} — ${shortDate(state.endDate)} · ${stayNights()} 晚` : `${shortDate(state.date)} · 单日`;
-  const matchedCount = source.items.filter((item) => item.availableCount >= state.minCount).length;
-  $("#results-summary").textContent = `${selection} · ${state.district || "上海全市"}${items.length ? ` · ${matchedCount} 个${partial ? "已确认有房的" : ""}驿站${matchedCount > items.length ? `，显示前 ${items.length} 个` : ""}` : ""}`;
-  $("#results").setAttribute("aria-busy", String(Boolean(source.loading)));
+  const matchedCount = source.items.length;
+  $("#results-summary").textContent = `${selection} · ${state.district || "上海全市"}${matchedCount ? ` · 已确认有房 ${source.confirmed} 个，待确认 ${source.pending} 个${matchedCount > items.length ? `，显示前 ${items.length} 个` : ""}` : ""}`;
+  $("#results").dataset.query = JSON.stringify([state.date, state.endDate, state.district, state.q]);
+  $("#results").dataset.resultState = items.length ? source.pending ? "candidates" : "confirmed" : source.status;
+
+  $("#results").setAttribute("aria-busy", String(Boolean(source.loading && !items.length)));
   if (items.length) $("#results").innerHTML = items.map((station) => stationCard(station)).join("");
   else if (source.status === "not-open") $("#results").innerHTML = emptyState("尚未开放申请", "请换一个日期。开放时间以官方申请页面为准。", "filters");
   else if (source.loading) $("#results").innerHTML = '<div class="empty-state loading-state"><span class="loading-dot"></span><p>正在查询房源…</p></div>';
@@ -103,7 +135,8 @@ function renderResults() {
   else if (source.status === "pending") { const feedback = intervalFeedback(source.meta); $("#results").innerHTML = emptyState(feedback.title, feedback.description); }
   else if (partial || !state.calendar) $("#results").innerHTML = emptyState("部分房源尚待确认", "暂未确认有房，不代表没有房源，请稍后重试。");
   else $("#results").innerHTML = emptyState("暂无匹配房源", "试试其他日期或区域，也可以建立有房提醒。", state.district || state.q || state.minCount > 1 ? "filters" : "reminder");
-  const currentById = new Map(allStations().map((station) => [station.id, station])), confirmed = new Map(source.items.map((station) => [station.id, station]));
+  measureResultPaint(items, source);
+  const currentById = new Map(allStations().map((station) => [station.id, station])), confirmed = new Map(source.items.filter((x) => x.displayState === "confirmed").map((station) => [station.id, station]));
   $("#favorites").innerHTML = state.favorites.size ? [...state.favorites.values()].map((station) => stationCard(favoriteForQuery(station, currentById.get(station.id), confirmed.get(station.id)), { favorite: true })).join("") : emptyState("还没有收藏", "点击驿站卡片上的收藏图标，方便下次对比。", "find");
   $("#favorite-count").textContent = state.favorites.size;
   const pieces = [];
@@ -112,11 +145,15 @@ function renderResults() {
   if (source.error) pieces.push(`${source.error}${items.length ? "，保留上次结果" : ""}`);
   else if (source.stale) pieces.push("上次房源结果已过期，等待更新");
   else if (source.status === "pending") pieces.push(intervalFeedback(source.meta).summary);
-  else if (partial && source.meta) pieces.push(source.total > 0 ? `部分数据 · ${Math.max(0, source.total - source.unknown)}/${source.total} 个驿站已更新` : "部分数据待确认");
+  else if (partial && source.meta) pieces.push(source.total > 0 ? `已确认 ${source.confirmed}/${source.total} 个驿站，其余待确认` : "部分数据待确认");
   else if (source.status === "not-open") pieces.push("尚未开放，具体以官方页面为准");
   if (state.endDate && state.calendarError) pieces.push("日历暂未更新");
   if (state.endDate && source.meta?.pending && collectionNotice) pieces.push(collectionNotice);
-  const sample = sampleTime(source.meta); if (sample) pieces.push(`最早采样 ${sample}`);
+  if (source.pending) pieces.push(state.endDate ? "候选驿站不代表连续入住有房" : "待确认驿站不代表有房");
+  if (source.historical) pieces.push("上次记录仅供参考，正在重新确认");
+  const sample = sampleTime(source.meta); if (sample) pieces.push(`最早更新于 ${sample}`);
+  if (state.catalog?.meta?.fetchedAt && Date.now() - Date.parse(state.catalog.meta.fetchedAt) >= 15 * 60_000) pieces.push("驿站目录待更新");
+  if (!sample && state.catalog?.meta?.fetchedAt) pieces.push(`目录更新于 ${sampleTime(state.catalog.meta)}`);
   if (!pieces.length) pieces.push(state.calendar ? "数据已更新" : "等待房源数据");
   $("#data-status").textContent = pieces.join(" · "); $("#data-status").classList.toggle("status-error", Boolean(source.error));
   $("#refresh-button").disabled = Boolean(state.calendarLoading || source.loading);
@@ -128,6 +165,17 @@ function renderFilters() {
   $("#filter-pills").innerHTML = ["", ...districts].map((district) => `<button class="filter-pill${district === state.district ? " active" : ""}" type="button" data-district="${esc(district)}" aria-pressed="${district === state.district}">${esc(district || "全部区域")}</button>`).join("");
 }
 function render() { renderCalendar(); renderFilters(); renderResults(); }
+async function loadCatalog() {
+  const key = state.houseType, sequence = ++catalogSequence; lastCatalogAttemptAt = Date.now();
+  if (state.catalogKey !== key) { state.catalog = readCatalogCache(key); state.catalogKey = key; render(); }
+  try {
+    const { payload } = await request(apiPath("/api/catalog", { houseType: key, includeOfficialDetails: false }));
+    if (sequence !== catalogSequence || state.houseType !== key) return;
+    if (!Array.isArray(payload.data)) throw new Error("驿站目录格式异常");
+    state.catalog = payload; state.catalogKey = key; state.catalogError = "";
+    writeCatalogCache(key, payload); reminders.refreshStations(); render();
+  } catch (error) { if (sequence === catalogSequence) { state.catalogError = error.message; renderResults(); } }
+}
 async function loadCalendar({ force = false } = {}) {
   const key = calendarKey(), cached = calendarCache.get(key);
   if (!force && cached && Date.now() - cached.at < 60_000) { calendarController?.abort(); calendarSequence++; state.calendarLoading = false; state.calendar = cached.payload; state.calendarKey = key; state.calendarError = ""; reminders.refreshStations(); render(); return; }
@@ -135,7 +183,7 @@ async function loadCalendar({ force = false } = {}) {
   lastCalendarAttemptAt = Date.now();
   state.calendarLoading = true; state.calendarError = ""; if (cached) { state.calendar = cached.payload; state.calendarKey = key; } render();
   try {
-    const result = await request(apiPath("/api/calendar", { startDate: today, days: 21, houseType: state.houseType, onlyOnShelf: state.onlyOnShelf, minCount: 1, limit: 200, includeDayItems: false, includeOfficialDetails: false }), { signal: calendarController.signal });
+    const result = await request(apiPath("/api/calendar", { startDate: today, days: 21, houseType: state.houseType, onlyOnShelf: state.onlyOnShelf, minCount: 1, limit: 200, includeDayItems: false, includeOfficialDetails: false, preview: true }), { signal: calendarController.signal });
     if (sequence !== calendarSequence || key !== calendarKey()) return;
     if (!Array.isArray(result.payload?.days) || !result.payload.days.length || !Array.isArray(result.payload?.stations)) {
       if (isPending(result)) throw new Error("全市数据正在准备，请稍后重试");
@@ -164,14 +212,15 @@ async function loadInterval({ force = false } = {}) {
   intervalController = new AbortController(); state.interval = { key, payload: cached?.payload || null, loading: true, pending: false, error: "" }; render();
   lastIntervalAttemptAt = Date.now(); lastIntervalAttemptKey = key;
   try {
-    const result = await request(apiPath("/api/available", { date: state.date, endDate: state.endDate, district: state.district, q: state.q, houseType: state.houseType, onlyOnShelf: state.onlyOnShelf, minCount: 1, limit: 200, sort: "availability", includeOfficialDetails: false }), { signal: intervalController.signal });
+    const result = await request(apiPath("/api/available", { date: state.date, endDate: state.endDate, district: state.district, q: state.q, houseType: state.houseType, onlyOnShelf: state.onlyOnShelf, minCount: 1, limit: 200, sort: "availability", includeOfficialDetails: false, preview: true, warm: !force }), { signal: intervalController.signal });
     if (sequence !== intervalSequence || key !== intervalKey()) return;
     const pending = isPending(result);
     if (!Array.isArray(result.payload?.data)) throw new Error("区间房源数据格式异常，请稍后重试");
     collectionPump.observe(key, result.payload.meta);
     state.interval = { key, payload: result.payload, pending, ...intervalRetry({ status: result.status, retryAfter: result.retryAfter,
       refreshAfterMs: Math.max(result.payload.meta?.refreshAfterMs || 0, collectionPump.pollDelay(key)) }, Date.now(), { minimumMs: 1000 }) };
-    intervalCache.set(key, { ...state.interval, at: Date.now() });
+    intervalCache.delete(key); intervalCache.set(key, { ...state.interval, at: Date.now() });
+    while (intervalCache.size > 32) intervalCache.delete(intervalCache.keys().next().value);
     advanceInterval(key);
   } catch (error) { if (error.name === "AbortError" || sequence !== intervalSequence) return; state.interval = { key, payload: cached?.payload || null, error: error.message, ...intervalRetry(error) }; }
   finally { if (sequence === intervalSequence) { if (state.interval) state.interval.loading = false; render(); scheduleAutoUpdate(); } }
@@ -192,6 +241,9 @@ async function openStation(id) {
 }
 const reminders = setupReminders({ getConditions: conditions, getStations: () => [...new Map([...state.favorites, ...allStations().map((station) => [station.id, station])]).values()], switchTab });
 document.addEventListener("click", (event) => {
+  if (event.target.closest("[data-day], [data-district], #search-button, [data-reset-filters]")) markQuery();
+}, { capture: true });
+document.addEventListener("click", (event) => {
   const tab = event.target.closest("[data-tab]"); if (tab) switchTab(tab.dataset.tab);
   if (event.target.closest("[data-go-find]") || event.target.closest(".brand")) { event.preventDefault(); switchTab("find"); }
   const dayButton = event.target.closest("[data-day]"); if (dayButton) { state.date = dayButton.dataset.day; if (state.endDate && state.endDate <= state.date) state.endDate = addDays(state.date, 1); render(); $("#calendar").querySelector(`[data-day="${state.date}"]`)?.focus({ preventScroll: true }); if (state.endDate) scheduleInterval(); }
@@ -210,23 +262,23 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("[data-retry]")) refresh();
   if (event.target.closest("[data-reset-filters]")) { state.district = ""; state.q = ""; state.minCount = 1; state.date = addDays(today, 2); $("#keyword-filter").value = ""; $("#min-count").value = "1"; if (state.endDate && state.endDate <= state.date) state.endDate = addDays(state.date, 1); render(); if (state.endDate) loadInterval(); }
 });
-$("#district-filter").addEventListener("change", (event) => { state.district = event.target.value; render(); if (state.endDate) scheduleInterval(); });
-$("#keyword-filter").addEventListener("input", (event) => { state.q = event.target.value.trim(); renderCalendar(); renderResults(); if (state.endDate) scheduleInterval(); });
-$("#sort-filter").addEventListener("change", (event) => { state.sort = event.target.value; renderResults(); });
+$("#district-filter").addEventListener("change", (event) => { markQuery(); state.district = event.target.value; render(); if (state.endDate) scheduleInterval(); });
+$("#keyword-filter").addEventListener("input", (event) => { markQuery(); state.q = event.target.value.trim(); renderCalendar(); renderResults(); if (state.endDate) scheduleInterval(); });
+$("#sort-filter").addEventListener("change", (event) => { markQuery(); state.sort = event.target.value; renderResults(); });
 $("#result-limit").addEventListener("change", (event) => { state.limit = Number(event.target.value); renderResults(); });
-$("#min-count").addEventListener("change", (event) => { const count = Number(event.target.value); if (!Number.isInteger(count) || count < 1 || count > 10000) { event.target.value = String(state.minCount); toast("请输入 1 到 10000 之间的整数。"); return; } state.minCount = count; render(); });
-for (const selector of ["#house-type", "#only-on-shelf"]) $(selector).addEventListener("change", () => { state.houseType = $("#house-type").value; state.onlyOnShelf = $("#only-on-shelf").checked; state.nearestDistances.clear(); loadCalendar(); if (state.endDate) scheduleInterval(); });
+$("#min-count").addEventListener("change", (event) => { markQuery(); const count = Number(event.target.value); if (!Number.isInteger(count) || count < 1 || count > 10000) { event.target.value = String(state.minCount); toast("请输入 1 到 10000 之间的整数。"); return; } state.minCount = count; render(); });
+for (const selector of ["#house-type", "#only-on-shelf"]) $(selector).addEventListener("change", () => { state.houseType = $("#house-type").value; state.onlyOnShelf = $("#only-on-shelf").checked; state.nearestDistances.clear(); markQuery(); loadCatalog(); loadCalendar(); if (state.endDate) scheduleInterval(); });
 $("#date-jump").addEventListener("click", () => { $("#stay-start").value = state.date; $("#stay-start").min = today; $("#stay-end").value = state.endDate || ""; $("#stay-end").min = addDays(state.date, 1); $("#stay-error").textContent = ""; $("#stay-dialog").showModal(); });
 $("#stay-start").addEventListener("change", () => { if (validDate($("#stay-start").value)) $("#stay-end").min = addDays($("#stay-start").value, 1); });
 $("#stay-form").addEventListener("submit", (event) => {
   event.preventDefault(); const start = $("#stay-start").value, end = $("#stay-end").value;
   if (!validDate(start) || (end && (!validDate(end) || end <= start))) { $("#stay-error").textContent = "请选择有效日期，离店日期需晚于入住日期。"; return; }
-  state.date = start; state.endDate = end || null; $("#stay-dialog").close(); render();
+  markQuery(); state.date = start; state.endDate = end || null; $("#stay-dialog").close(); render();
   if (!state.endDate && !days.includes(state.date)) { toast("单日查询请从未来 21 天中选择日期。"); state.date = addDays(today, 2); render(); }
   loadInterval();
 });
 $("#search-button").addEventListener("click", () => { if (state.endDate) loadInterval(); else if (!state.calendar) loadCalendar(); $(".results-section").scrollIntoView({ behavior: "smooth", block: "start" }); });
-function refresh() { if (Date.now() - lastRefresh < 15_000) { toast("请稍候再刷新，避免重复请求。"); return; } lastRefresh = Date.now(); loadCalendar({ force: true }); if (state.endDate) loadInterval({ force: true }); }
+function refresh() { if (Date.now() - lastRefresh < 15_000) { toast("请稍候再刷新，避免重复请求。"); return; } lastRefresh = Date.now(); loadCatalog(); loadCalendar({ force: true }); if (state.endDate) loadInterval({ force: true }); }
 $("#refresh-button").addEventListener("click", refresh);
 $("#locate-button").addEventListener("click", () => {
   if (!navigator.geolocation) { toast("浏览器不支持定位，请按区域查找。"); return; }
@@ -251,6 +303,7 @@ function needsSnapshotUpdate(payload, error = false, pending = false) {
 }
 function autoUpdate() {
   if (document.hidden) return;
+  if (Date.now() - lastCatalogAttemptAt >= 60_000 && (!state.catalog || state.catalogError || Date.now() - Date.parse(state.catalog.meta?.fetchedAt) >= 15 * 60_000)) loadCatalog();
   const currentCalendar = state.calendarKey === calendarKey() ? state.calendar : null;
   if (!state.calendarLoading && Date.now() - lastCalendarAttemptAt >= 60_000 && needsSnapshotUpdate(currentCalendar, state.calendarError)) loadCalendar({ force: true });
   if (state.endDate && !intervalTimer) {
@@ -266,4 +319,4 @@ function scheduleAutoUpdate() {
 document.addEventListener("visibilitychange", () => { if (!document.hidden) autoUpdate(); scheduleAutoUpdate(); });
 window.addEventListener("pagehide", () => clearTimeout(autoUpdateTimer));
 window.addEventListener("pageshow", () => { autoUpdate(); scheduleAutoUpdate(); });
-hydrateIcons(); render(); loadCalendar(); reminders.initialize(); scheduleAutoUpdate();
+hydrateIcons(); render(); loadCatalog(); loadCalendar(); reminders.initialize(); scheduleAutoUpdate();

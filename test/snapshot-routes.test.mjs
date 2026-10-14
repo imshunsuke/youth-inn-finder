@@ -103,3 +103,36 @@ test("storage errors have a generic 500 response without raw database details", 
   assert.equal(response.status, 500);
   assert.equal((await response.text()).includes("PRIVATE_DATABASE_DETAILS"), false);
 });
+
+test("discovery catalog never claims date availability and remains bounded to one day", async(t)=>{
+  const {db,store,clock,advance}=await setup(t);
+  const fetchedAt=clock().toISOString();
+  await store.saveCatalog('0',{items:[{...station('a'),houseCount:999}],fetchedAt});
+  advance(21*60_000);
+  const response=await handleQueryRequest(request('/api/catalog?includeOfficialDetails=false'),{db,clock});
+  const body=await response.json();assert.equal(response.status,200);assert.equal(body.meta.catalogStatus,'stale');
+  assert.equal(body.meta.fetchedAt,fetchedAt);assert.equal(body.meta.availabilityStatus,'unconfirmed');assert.equal(body.data[0].houseCount,undefined);
+  advance(24*60*60_000);assert.equal((await handleQueryRequest(request('/api/catalog'),{db,clock})).status,503);
+});
+test("preview preserves historical samples separately without changing strict API or monitoring semantics",async(t)=>{
+  const {db,store,clock}=await setup(t);const old=new Date(initialTime-21*60_000).toISOString();
+  await store.saveCatalog('0',{items:[station('a'),station('b')],fetchedAt:clock().toISOString()});
+  await store.saveIntervalBatch([{stationId:'a',startDate:'2026-10-15',endDate:'2026-10-18',...known(9),fetchedAt:old},
+    {stationId:'b',startDate:'2026-10-15',endDate:'2026-10-18',...known(0),fetchedAt:clock().toISOString()}]);
+  const path='/api/available?date=2026-10-15&endDate=2026-10-18';
+  const strict=await(await handleQueryRequest(request(path),{db,clock})).json();assert.deepEqual(strict.data,[]);assert.equal(strict.observations,undefined);
+  const preview=await(await handleQueryRequest(request(path+'&preview=true'),{db,clock})).json();assert.deepEqual(preview.data,[]);
+  assert.equal(preview.meta.snapshotCoverage.staleStations,1);assert.equal(preview.meta.coverage.unknownStations,1);
+  assert.equal(preview.observations.find(x=>x.stationId==='a').fetchedAt,old);assert.equal(preview.observations.find(x=>x.stationId==='a').snapshotStatus,'stale');
+  assert.equal(preview.observations.find(x=>x.stationId==='b').availableCount,0);
+});
+test("calendar history is display-only and disappears at the one-hour hard limit",async(t)=>{
+  const {db,store,clock}=await setup(t);const old=new Date(initialTime-21*60_000).toISOString();
+  await store.saveCatalog('0',{items:[station('a'),station('b')],fetchedAt:clock().toISOString()});
+  await store.saveCalendarBatch([{stationId:'a',calendar:{'2026-10-15':known(8)},fetchedAt:old},
+    {stationId:'b',calendar:{'2026-10-15':known(7)},fetchedAt:new Date(initialTime-60*60_000).toISOString()}]);
+  const body=await(await handleQueryRequest(request('/api/calendar?startDate=2026-10-15&days=1&preview=true'),{db,clock})).json();
+  assert.equal(body.days[0].knownAvailableCount,0);assert.equal(body.stations[0].availability[0].availableCount,null);
+  assert.equal(body.stations[0].historicalAvailability['2026-10-15'].availableCount,8);assert.equal(body.stations[0].fetchedAt,old);
+  assert.equal(body.stations[1].historicalAvailability,undefined);
+});

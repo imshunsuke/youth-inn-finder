@@ -21,11 +21,11 @@ function snapshotUnavailable(status = "missing") {
 }
 
 function snapshot(row, now, maxAgeMs, validate) {
-  if (!row?.payload_json || !row.fetched_at) return { status: "missing", fetchedAt: row?.fetched_at ?? null, lastErrorCode: row?.last_error_code ?? null };
+  if (!row?.payload_json || !row.fetched_at) return { status: "missing", fetchedAt: row?.fetched_at ?? null, lastAttemptAt: row?.last_attempt_at ?? null, lastErrorCode: row?.last_error_code ?? null };
   let payload;
-  try { payload = JSON.parse(row.payload_json); } catch { return { status: "invalid", fetchedAt: row.fetched_at, lastErrorCode: "INVALID_SNAPSHOT" }; }
+  try { payload = JSON.parse(row.payload_json); } catch { return { status: "invalid", fetchedAt: row.fetched_at, lastAttemptAt: row.last_attempt_at, lastErrorCode: "INVALID_SNAPSHOT" }; }
   if (!validate(payload) || !Number.isFinite(Date.parse(row.fetched_at))) {
-    return { status: "invalid", fetchedAt: row.fetched_at, lastErrorCode: "INVALID_SNAPSHOT" };
+    return { status: "invalid", fetchedAt: row.fetched_at, lastAttemptAt: row.last_attempt_at, lastErrorCode: "INVALID_SNAPSHOT" };
   }
   const age = now - Date.parse(row.fetched_at);
   return { status: age < 0 || age >= maxAgeMs ? "stale" : "fresh", payload, fetchedAt: row.fetched_at,
@@ -97,11 +97,12 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
         ORDER BY (id>COALESCE((SELECT reminder_cursor FROM query_collector_state WHERE name='official'),'')) DESC,id LIMIT 200`, guardedBindings(lease)),
       prepare(`UPDATE interval_query_jobs SET priority=0,priority_until=0 WHERE priority=1
         AND (priority_until<=? OR NOT EXISTS(SELECT 1 FROM reminders WHERE status='active')) AND ${guard(lease)}`,
-      [now(), ...guardedBindings(lease)]), dueIntervalStatement(30, lease)];
+      [now(), ...guardedBindings(lease)]), dueIntervalStatement(30, lease),
+      prepare(`SELECT * FROM query_warm_ranges WHERE expires_at>? AND ${guard(lease)} LIMIT 1`, [now(), ...guardedBindings(lease)])];
   }
   function collectorInputs(result) {
     return { catalogs: collectorCatalogs(result[0].results), calendars: result[1].results,
-      reminders: result[2].results, intervals: result[4].results };
+      reminders: result[2].results, intervals: result[4].results, warmRange: result[5].results[0] ?? null };
   }
   async function readCollectorInputs(lease) {
     // Independent planning reads share one D1 round trip. Calendar payloads and
@@ -350,6 +351,17 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
     return enqueueIntervalJobs(ids.map((stationId) => ({ stationId, startDate: dates.startDate, endDate: dates.endDate, expiresAt })), { maxJobs, intervalMaxAgeMs, publicTtlMs: ttlMs });
   }
 
+  async function rememberWarmRange(conditions) {
+    const query = parseCommonQuery(conditions), dates = validateStayDates(conditions.date, conditions.endDate);
+    const today = todayInShanghai(clock);
+    if (!dates.endDate || dates.startDate < today || dates.startDate > addDays(today, 90) || dates.endDate > addDays(dates.startDate, 30)) return;
+    const expiresAt = Math.min(now() + 30 * 60_000, Date.parse(`${dates.startDate}T00:00:00+08:00`));
+    await prepare(`INSERT INTO query_warm_ranges(name,start_date,end_date,house_type,only_on_shelf,expires_at)
+      VALUES('popular',?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET start_date=excluded.start_date,end_date=excluded.end_date,
+      house_type=excluded.house_type,only_on_shelf=excluded.only_on_shelf,expires_at=excluded.expires_at`,
+    [dates.startDate, dates.endDate, query.houseType, Number(query.onlyOnShelf), expiresAt]).run();
+  }
+
   // Internal bulk admission for active reminder collection. Callers validate dates
   // and filter against a trusted catalog first; no reminder rows are mutated here.
   async function enqueueIntervalJobs(tasks, { maxJobs = 300, lease, priority = 0,
@@ -458,7 +470,7 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
 
   return Object.freeze({ readCatalog, readCatalogRows, readCalendarRows, readCollectorCatalogRows,
     readCollectorCalendarRows, readCollectorInputs, acquireCollectionInputs, readCalendars, readIntervals, finishCollection,
-    saveCatalog, recordCatalogFailure, saveCalendarBatch, saveIntervalBatch, acquireLease, acquireInteractiveLease, requestCollectionTurn, hasLease,
+    rememberWarmRange, saveCatalog, recordCatalogFailure, saveCalendarBatch, saveIntervalBatch, acquireLease, acquireInteractiveLease, requestCollectionTurn, hasLease,
     advanceCursor, releaseLease, dueIntervalJobs, nextIntervalAttemptAt, enqueueIntervalQuery, enqueueIntervalJobs, reconcileIntervalPriorities, pruneExpiredJobs });
 }
 
@@ -474,12 +486,13 @@ export function projectCollectorListings(items) {
  * Missing/stale/invalid observations throw into queryService's unknown/partial path;
  * diagnostics retains their old timestamps without exposing expired counts as current.
  */
-export function createSnapshotClient({ db, store, clock = () => new Date(), compactCatalog = false, ...options } = {}) {
+export function createSnapshotClient({ db, store, clock = () => new Date(), compactCatalog = false, displayHistory = false, ...options } = {}) {
   store ??= createSnapshotStore({ db, clock });
   const freshness = { ...DEFAULT_SNAPSHOT_FRESHNESS, ...options };
   const catalogs = new Map();
   const stationIds = new Set();
   const observations = new Map();
+  const display = new Map();
   let calendars;
   const intervals = new Map();
   async function fetchListings({ houseType = "0" } = {}) {
@@ -493,6 +506,10 @@ export function createSnapshotClient({ db, store, clock = () => new Date(), comp
   function record(key, stationId, kind, entry) {
     observations.set(key, { stationId: String(stationId), kind, status: entry.status,
       fetchedAt: entry.fetchedAt, lastErrorCode: entry.lastErrorCode ?? null });
+    const age = clockDate(clock).getTime() - Date.parse(entry.fetchedAt);
+    if (displayHistory && entry.payload && age >= 0 && age < 60 * 60_000) display.set(String(stationId), {
+      stationId: String(stationId), snapshotStatus: entry.status, fetchedAt: entry.fetchedAt, ...entry.payload,
+    });
     if (entry.status !== "fresh") throw snapshotUnavailable(entry.status);
     return entry;
   }
@@ -529,7 +546,7 @@ export function createSnapshotClient({ db, store, clock = () => new Date(), comp
   async function diagnostics() {
     return { catalogs: await Promise.all([...catalogs].map(async ([houseType, promise]) => {
       const item = await promise; return { houseType, status: item.status, fetchedAt: item.fetchedAt, lastErrorCode: item.lastErrorCode ?? null };
-    })), observations: [...observations.values()], freshness };
+    })), observations: [...observations.values()], freshness, ...(displayHistory ? { display: [...display.values()] } : {}) };
   }
   return Object.freeze({ fetchListings, fetchCalendar, fetchDateAvailability, diagnostics });
 }

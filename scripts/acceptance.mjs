@@ -8,7 +8,10 @@ import { createCollectionPump } from "../public/lib/collection-pump.mjs";
 export const CRITERIA = Object.freeze({ durationMinutes: 70, idleStartMinutes: 10, idleEndMinutes: 35,
   firstResultMs: 45_000, fullRangeMs: 600_000, httpP95Ms: 3000, availability: 0.99, cacheAgeMs: 1200_000 });
 export const PERFORMANCE_CRITERIA = Object.freeze({ ...CRITERIA, firstResultMs: 5000, fullRangeMs: 90_000, httpP95Ms: 1000 });
-const paths = new Set(["/api/available", "/api/calendar", "/api/collection", "/api/health", "/api/station"]);
+// Two-stage discovery: browser paint is independently graded by display-evidence.
+// These limits describe background exact confirmation, not one-second UI results.
+export const DISCOVERY_CRITERIA = Object.freeze({ ...CRITERIA, discovery: true, catalogP95Ms: 1000 });
+const paths = new Set(["/api/catalog","/api/available", "/api/calendar", "/api/collection", "/api/health", "/api/station"]);
 const percentile = (values, p) => values.length ? [...values].sort((a,b) => a-b)[Math.max(0, Math.ceil(values.length * p) - 1)] : null;
 
 // Never retain request headers, query strings, bodies, log messages or exceptions.
@@ -41,7 +44,7 @@ export function inspectSnapshot(p, at = Date.now()) {
   return [...new Set(issues)];
 }
 
-export function summarize(samples, traces, { durationMs, expectedDurationMs, idleStartMs, idleEndMs, expectedDeployment, criteria = CRITERIA } = {}) {
+export function summarize(samples, traces, { durationMs, expectedDurationMs, idleStartMs, idleEndMs, expectedDeployment, criteria = CRITERIA, warmedDate } = {}) {
   const queries = samples.filter((s) => s.kind === "query"), errors = samples.filter((s) => s.http !== 200 || s.error);
   const violations = samples.flatMap((s) => s.issues ?? []), gates = [];
   if (durationMs < expectedDurationMs) gates.push("DURATION_INCOMPLETE");
@@ -65,7 +68,7 @@ export function summarize(samples, traces, { durationMs, expectedDurationMs, idl
       recoveryMs: resumedFull ? resumedFull.elapsedMs-idleEndMs : null, fullAfterSecondExpiry: Boolean(laterFull) };
     if (!first || first.elapsedMs>criteria.firstResultMs) gates.push(`FIRST_RESULT:${date}`);
     if (!full || full.elapsedMs>criteria.fullRangeMs) gates.push(`FULL_RANGE:${date}`);
-    if (!resumed.length || resumed[0].fresh !== 0 || !resumed[0].stale) gates.push(`NATURAL_EXPIRY_NOT_PROVEN:${date}`);
+    if (!resumed.length || (!(criteria.discovery && date === warmedDate) && (resumed[0].fresh !== 0 || !resumed[0].stale))) gates.push(`NATURAL_EXPIRY_NOT_PROVEN:${date}`);
     if (!resumedFull || resumedFull.elapsedMs-idleEndMs>criteria.fullRangeMs) gates.push(`EXPIRY_RECOVERY:${date}`);
     if (!laterFull) gates.push(`SECOND_CACHE_CYCLE:${date}`);
   }
@@ -76,24 +79,27 @@ export function summarize(samples, traces, { durationMs, expectedDurationMs, idl
   if (idleCalendars.some((s)=>s.http===200 && s.total>0 && s.fresh/s.total<.85)) gates.push("BACKGROUND_CALENDAR_FRESHNESS");
   const queryP95Ms = percentile(queries.filter((s)=>s.http===200).map((s)=>s.durationMs),.95);
   if (queryP95Ms === null || queryP95Ms>criteria.httpP95Ms) gates.push("QUERY_LATENCY_P95");
+  const catalogSamples = samples.filter((s) => s.kind === "catalog" && s.http === 200);
+  const catalogP95Ms = percentile(catalogSamples.map((s) => s.durationMs), .95);
+  if (criteria.discovery && (catalogSamples.length < 60 || catalogP95Ms === null || catalogP95Ms > criteria.catalogP95Ms)) gates.push("DISCOVERY_CATALOG_LATENCY_OR_COVERAGE");
   const currentTraces = traces.filter((s)=>s.deployment===expectedDeployment);
   if (currentTraces.length<20) gates.push("RUNTIME_OBSERVABILITY_INCOMPLETE");
   const cpuOverBudget = currentTraces.filter((s)=>s.cpuMs>10).length;
   if (currentTraces.some((s)=>s.outcome === "exceededCpu" || s.outcome === "exceededMemory")) gates.push("RUNTIME_LIMIT_TERMINATION");
   if (currentTraces.some((s)=>s.collection?.status === "failed")) gates.push("CRON_COLLECTION_FAILURE");
   const byPath={};
-  for (const path of ["/api/available","/api/calendar","/api/collection","cron"]) {
+  for (const path of ["/api/catalog","/api/available","/api/calendar","/api/collection","cron"]) {
     const selected=currentTraces.filter((s)=>path==="cron"?s.cron:s.path===path);
     byPath[path]={observed:selected.length,p95Ms:percentile(selected.map((s)=>s.cpuMs).filter(Number.isFinite),.95),over10ms:selected.filter((s)=>s.cpuMs>10).length};
   }
   return { functional: gates.length ? "FAIL" : "PASS", gates: [...new Set(gates)], durationMs, maxHeartbeatGapMs, sampleCount: samples.length,
-    errors: errors.length, availability: samples.length ? (samples.length-errors.length)/samples.length : 0, queryP95Ms, ranges,
+    errors: errors.length, availability: samples.length ? (samples.length-errors.length)/samples.length : 0, queryP95Ms, catalogP95Ms, ranges,
     cpu: { status: !currentTraces.length ? "UNOBSERVED" : cpuOverBudget ? "BUDGET_RISK" : "WITHIN_OBSERVED_BUDGET",
       observed: currentTraces.length, over10ms: cpuOverBudget, p95Ms: percentile(currentTraces.map((s)=>s.cpuMs).filter(Number.isFinite),.95),
       terminations: currentTraces.filter((s)=>s.outcome === "exceededCpu" || s.outcome === "exceededMemory").length,byPath } };
 }
 
-export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acceptance", tail = false, offset = 12, fast = false } = {}) {
+export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acceptance", tail = false, offset = 12, fast = false, discovery = false } = {}) {
   const base = new URL(baseUrl);
   if (base.username || base.password || base.search || base.hash || base.pathname !== "/" ||
       !(base.protocol === "https:" || base.protocol === "http:" && ["127.0.0.1", "localhost"].includes(base.hostname))) throw new Error("Use a public HTTPS origin or a local development origin");
@@ -103,11 +109,12 @@ export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acc
   await writeFile(resolve(root,"samples.jsonl"),"",{flag:"wx"});
   await writeFile(resolve(root,"runtime.jsonl"),"",{flag:"wx"});
   const started = Date.now(), today = todayInShanghai(), dates = [offset,offset+1,offset+2].map((days)=>addDays(today,days)), endDate=addDays(today,offset+3);
-  const samples = [], traces = [], suppressedUntil = new Map(); let expectedDeployment, tailChild, tailBuffer = "", lastMinute = -1, stopped = false, latestMeta = null, pumpTask;
-  const criteria = fast ? PERFORMANCE_CRITERIA : CRITERIA;
+  const samples = [], traces = [], suppressedUntil = new Map(); let warmRegistered = false; let expectedDeployment, tailChild, tailBuffer = "", lastMinute = -1, stopped = false, latestMeta = null, pumpTask;
+  if (discovery) fast = true;
+  const criteria = discovery ? DISCOVERY_CRITERIA : fast ? PERFORMANCE_CRITERIA : CRITERIA;
   const stop=()=>{stopped=true;}; process.once("SIGINT",stop); process.once("SIGTERM",stop);
   const metadata = { startedAt: new Date(started).toISOString(), baseUrl: base.origin, dates, endDate, minutes,
-    gitHead: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), criteria, fast };
+    gitHead: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), criteria, fast, discovery, ...(discovery ? { warmedDate: dates[0] } : {}) };
   const save = (file, row) => appendFile(resolve(root,file), JSON.stringify(row)+"\n");
   if (tail) {
     tailChild = spawn("npx", ["wrangler", "tail", "youth-inn-finder", "--format", "json"], { stdio: ["ignore","pipe","pipe"] });
@@ -155,10 +162,13 @@ export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acc
     while (!stopped && Date.now()-started < minutes*60_000) {
       const elapsed=Date.now()-started, minute=Math.floor(elapsed/60_000), idle=minute>=10 && minute<35;
       const tickStart=Date.now(); let nextTick=tickStart+(idle?60_000:10_000);
-      if (minute!==lastMinute) { await sample("calendar","/api/calendar?includeDayItems=false&includeOfficialDetails=false&onlyOnShelf=true"); await sample("health","/api/health"); lastMinute=minute; }
+      if (minute!==lastMinute) { if (discovery) await sample("catalog", "/api/catalog?includeOfficialDetails=false"); await sample("calendar","/api/calendar?includeDayItems=false&includeOfficialDetails=false&onlyOnShelf=true"); await sample("health","/api/health"); lastMinute=minute; }
       const queryElapsed=Date.now()-started;
       if (!(queryElapsed>=600_000 && queryElapsed<2100_000)) {
-        const results=await Promise.all(dates.map((date)=>sample("query",`/api/available?date=${date}&endDate=${endDate}&onlyOnShelf=true&limit=200&includeOfficialDetails=false`,{date})));
+        const results=await Promise.all(dates.map((date)=>{
+          const warm = discovery && !warmRegistered && date===dates[0]; if (warm) warmRegistered=true;
+          return sample("query",`/api/available?date=${date}&endDate=${endDate}&onlyOnShelf=true&limit=200&includeOfficialDetails=false${discovery ? `&preview=true&warm=${warm}` : ""}`,{date});
+        }));
         // Match the page: its next read is ten seconds after the previous read
         // completes, not after an earlier wall-clock tick or after collection.
         latestMeta = results.find((r)=>r.payload?.meta?.pending && r.payload.meta.collection?.advanceUrl==="/api/collection")?.payload.meta ?? { pending:false };
@@ -181,7 +191,7 @@ export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acc
     stopped=true; await pumpTask;
     process.removeListener("SIGINT",stop); process.removeListener("SIGTERM",stop);
     tailChild?.kill("SIGTERM");
-    const report=summarize(samples,traces,{durationMs:Date.now()-started,expectedDurationMs:minutes*60_000,idleStartMs:600_000,idleEndMs:2100_000,expectedDeployment,criteria});
+    const report=summarize(samples,traces,{durationMs:Date.now()-started,expectedDurationMs:minutes*60_000,idleStartMs:600_000,idleEndMs:2100_000,expectedDeployment,criteria,warmedDate:discovery?dates[0]:undefined});
     await writeFile(resolve(root,"report.json"),JSON.stringify({...metadata,...report},null,2));
     console.log(JSON.stringify({ report:resolve(root,"report.json"),...report }));
   }
@@ -191,6 +201,7 @@ export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acc
 if (process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   const options={};
   for(let i=2;i<process.argv.length;i++) { const key=process.argv[i]; if(key==="--tail") options.tail=true;
+    else if(key==="--discovery") options.discovery=true;
     else if(key==="--fast") options.fast=true;
     else if(["--url","--minutes","--output","--offset"].includes(key)) { const value=process.argv[++i]; options[key==="--url"?"baseUrl":key.slice(2)]=["--minutes","--offset"].includes(key)?Number(value):value; }
     else throw new Error("Unknown acceptance option"); }

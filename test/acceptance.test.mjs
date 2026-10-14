@@ -64,3 +64,14 @@ test("performance mode cannot pass a minute-scale cold query by using the old te
   const fast=samples.map(s=>s.kind!=="query"?s:{...s,elapsedMs:s.elapsedMs===10000?2000:s.elapsedMs===300000?60000:s.elapsedMs===2400000?2160000:s.elapsedMs});
   assert.equal(summarize(fast,traces,{...options,criteria:PERFORMANCE_CRITERIA}).functional,"PASS");
 });
+
+test('discovery acceptance separately requires a fast catalog and preserves expiry tests for non-warmed ranges',async()=>{
+  const {DISCOVERY_CRITERIA}=await import('../scripts/acceptance.mjs');const {samples,traces,options}=evidence();
+  const catalogs=Array.from({length:70},(_,i)=>({kind:'catalog',elapsedMs:i*60_000,http:200,durationMs:200,deployment}));
+  const warmedDate='2026-10-26';
+  const input=samples.map(x=>x.kind==='query'&&x.date===warmedDate&&x.elapsedMs===2100_000?{...x,fresh:30,stale:60}:x);
+  const result=summarize([...input,...catalogs],traces,{...options,criteria:DISCOVERY_CRITERIA,warmedDate});assert.equal(result.functional,'PASS');
+  assert.equal(summarize(input,traces,{...options,criteria:DISCOVERY_CRITERIA,warmedDate}).functional,'FAIL');
+  const bad=input.map(x=>x.kind==='query'&&x.date==='2026-10-27'&&x.elapsedMs===2100_000?{...x,fresh:30}:x);
+  assert.ok(summarize([...bad,...catalogs],traces,{...options,criteria:DISCOVERY_CRITERIA,warmedDate}).gates.some(x=>x==='NATURAL_EXPIRY_NOT_PROVEN:2026-10-27'));
+});

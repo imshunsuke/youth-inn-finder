@@ -6,7 +6,8 @@ export function createQueryResponseCache({ clock = () => Date.now(), maxEntries 
   const key = (request) => {
     if (request.method !== "GET" || request.headers.has("Authorization") || request.headers.has("Cookie")) return null;
     const url = new URL(request.url);
-    if (!["/api/calendar", "/api/available", "/api/nearest", "/api/station"].includes(url.pathname)) return null;
+    if (!["/api/catalog", "/api/calendar", "/api/available", "/api/nearest", "/api/station"].includes(url.pathname)) return null;
+    if (url.searchParams.has("warm") && !["false", "0", "off", "no", "n", ""].includes(url.searchParams.get("warm").toLowerCase())) return null;
     url.searchParams.sort(); return url.href;
   };
   const remove = (k) => { const old = entries.get(k); if (old) bytes -= old.size; entries.delete(k); };

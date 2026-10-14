@@ -12,7 +12,7 @@
     "start": "node --env-file-if-exists=.env.local server.mjs",
     "dev": "node --env-file-if-exists=.env.local --watch server.mjs",
     "test": "node --test test/*.test.mjs",
-    "test:acceptance": "node --test test/query-lifecycle.test.mjs test/collection-pump.test.mjs test/collection-route.test.mjs test/node-http.test.mjs test/acceptance.test.mjs test/listing-state.test.mjs",
+    "test:acceptance": "node --test test/query-lifecycle.test.mjs test/collection-pump.test.mjs test/collection-route.test.mjs test/node-http.test.mjs test/acceptance.test.mjs test/listing-state.test.mjs test/search-view.test.mjs test/display-evidence.test.mjs test/snapshot-collector.test.mjs test/snapshot-routes.test.mjs test/query-response-cache.test.mjs",
     "acceptance:live": "node scripts/acceptance.mjs",
     "check": "node scripts/check.mjs",
     "invites": "node scripts/invitations.mjs",

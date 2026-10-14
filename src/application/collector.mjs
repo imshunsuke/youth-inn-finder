@@ -141,8 +141,21 @@ export function createCollector({ db, clock = () => new Date(), fetchImpl = (...
       const selectedCalendars = [...urgentCalendars, ...dueCalendars.filter((id) => !urgentIds.has(id))].slice(0, calendarSlots);
       const selectedIntervals = dueIntervals.slice(0, intervalCount);
       if (now() >= lease.expiresAt) return { ...report, status: "lease-lost", requestsUsed };
+      // A single recent range is warmed only with otherwise-unused slots. It
+      // never displaces calendar/reminder/foreground jobs or increases the budget.
+      let warmTasks = [];
+      const spare = Math.min(3, remaining - calendarSlots - intervalCount), warm = inputs.warmRange;
+      if (spare > 0 && warm && warm.expires_at > now()) {
+        const ids = filterListings(catalogItems(rows.get(warm.house_type)), { onlyOnShelf: warm.only_on_shelf === 1 }).map((x) => x.id);
+        const samples = await store.readIntervals(ids, warm.start_date, warm.end_date);
+        warmTasks = ids.filter((id) => {
+          const row = samples.get(id), at = Date.parse(row?.fetchedAt);
+          return (!Number.isFinite(at) || now() - at >= intervalRefreshMs) && (row?.lastAttemptAt ?? 0) <= now() - 60_000;
+        }).sort((a,b) => (Date.parse(samples.get(a)?.fetchedAt) || 0) - (Date.parse(samples.get(b)?.fetchedAt) || 0))
+          .slice(0, spare).map((stationId) => ({ kind: "interval", stationId, startDate: warm.start_date, endDate: warm.end_date, failureCount: 0, warmed: true }));
+      }
       const tasks = [...selectedCalendars.map((stationId) => ({ kind: "calendar", stationId })),
-        ...selectedIntervals.map((job) => ({ kind: "interval", stationId: job.station_id, startDate: job.start_date, endDate: job.end_date, failureCount: job.failure_count }))];
+        ...selectedIntervals.map((job) => ({ kind: "interval", stationId: job.station_id, startDate: job.start_date, endDate: job.end_date, failureCount: job.failure_count })), ...warmTasks];
       const outcomes = await mapConcurrent(tasks, async (task) => {
         try {
           const result = task.kind === "calendar" ? await client.fetchCalendar(task.stationId)
@@ -164,7 +177,7 @@ export function createCollector({ db, clock = () => new Date(), fetchImpl = (...
         report[name] = { attempted: values.length, succeeded: values.filter((item) => item.ok).length, failed: values.filter((item) => !item.ok).length };
       }
       return { ...report, status: advanced ? "collected" : "lease-lost", requestsUsed, reminders,
-        calendarCursor: selectedCalendars.at(-1) ?? lease.calendarCursor, queuedIntervalTasks: dueIntervals.length };
+        calendarCursor: selectedCalendars.at(-1) ?? lease.calendarCursor, queuedIntervalTasks: dueIntervals.length, warmed: warmTasks.length };
     } finally {
       if (!finished) await store.releaseLease(lease);
     }
