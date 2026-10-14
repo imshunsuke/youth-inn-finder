@@ -72,7 +72,7 @@
 - `coverage`：执行站点观测时，`successfulStations + failedStations = totalStations`；`unknownStations` 与失败有交集，不能再次相加作分母。未开放日期另有 `notOpenStations`。
 - `snapshotCoverage`：快照层面的新鲜、缺失、过期和无效数量；`lastFailedStations` 是另外的历史失败指标，也不能重复加入分母。
 
-HTTP 响应读取持久快照，不等待全市逐站查询。缺少目录时返回 `503 SNAPSHOT_PENDING`，过期目录返回 `503 SNAPSHOT_STALE`；缺少部分站点快照时可返回 `200` 和部分结果。缺少连续入住快照时会有限入队，`meta.collection` 说明是否已排队或容量受限。线上返回固定的 `meta.collection.advanceUrl`。客户端用无请求体的 `POST /api/collection` 启动一次最多 6 个驿站的独立补查，再读查询结果；不会在一次调用里同时解析全市目录和采集。按 `Retry-After` 或 `meta.refreshAfterMs` 等待，按需补查时为 10 秒，目录准备等情况为 60 秒。不保证立即完成；默认快照满 20 分钟后视为过期。
+HTTP 响应读取持久快照，不等待全市逐站查询。缺少目录时返回 `503 SNAPSHOT_PENDING`，过期目录返回 `503 SNAPSHOT_STALE`；缺少部分站点快照时可返回 `200` 和部分结果。缺少连续入住快照时会有限入队，`meta.collection` 说明是否已排队或容量受限。线上返回固定的 `meta.collection.advanceUrl`。客户端用无请求体的 `POST /api/collection` 启动一次最多 6 个驿站的独立补查，再读查询结果；不会在一次调用里同时解析全市目录和采集。查询进度首分钟每 2 秒读取，补查按共享的一秒启动间隔连续推进；一分钟后仍未完成则退回每 10 秒重试。以 `Retry-After` 为准等待失败、限额或下一次到期任务，目录准备等情况为 60 秒。默认快照满 20 分钟后视为过期。已完成的公开查询可命中 Worker 内存响应缓存，最多保存一分钟，且不能越过最早样本或目录的有效期；`X-Query-Cache: HIT` 标记命中，限流仍然执行。
 
 区间查询只为缺失、过期或无效快照的站点入队，成功的普通查询任务释放名额并保留快照；提醒任务仍定期刷新。`collection.requested` 是本次仍需更新的站点数，`accepted` 包括新入队和已有的待处理任务。`status=capacity-limited` 表示其中有站点未能入队，即使 `accepted` 大于 0；`queued` 表示待更新站点全部已排队。HTTP `200` 和 `pending=true` 只表示返回了部分结果，不能据此断言后台正在执行该查询。页面展示 `snapshotCoverage.freshStations/totalStations` 的快照更新进度；失败、排队和未入队分别提示，参数错误不会自动无限重试。
 

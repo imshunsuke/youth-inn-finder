@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { safeTrace, inspectSnapshot, summarize } from "../scripts/acceptance.mjs";
+import { safeTrace, inspectSnapshot, summarize, PERFORMANCE_CRITERIA } from "../scripts/acceptance.mjs";
 const deployment="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 function evidence() {
   const samples=[];
@@ -55,4 +55,12 @@ test("wall-clock duration cannot hide a sleeping machine or a missing part of th
   assert.equal(report.functional,"FAIL"); assert.ok(report.gates.includes("CONTINUOUS_SAMPLING_GAP"));
   const earlyStop=summarize(samples.filter(s=>s.elapsedMs<3600_000),traces,options);
   assert.ok(earlyStop.gates.includes("CONTINUOUS_SAMPLING_GAP"));
+});
+
+test("performance mode cannot pass a minute-scale cold query by using the old ten-minute standard",()=>{
+  const {samples,traces,options}=evidence();
+  const slow=summarize(samples,traces,{...options,criteria:PERFORMANCE_CRITERIA});
+  assert.equal(slow.functional,"FAIL");assert.ok(slow.gates.some(x=>x.startsWith("FIRST_RESULT:")));assert.ok(slow.gates.some(x=>x.startsWith("FULL_RANGE:")));
+  const fast=samples.map(s=>s.kind!=="query"?s:{...s,elapsedMs:s.elapsedMs===10000?2000:s.elapsedMs===300000?60000:s.elapsedMs===2400000?2160000:s.elapsedMs});
+  assert.equal(summarize(fast,traces,{...options,criteria:PERFORMANCE_CRITERIA}).functional,"PASS");
 });

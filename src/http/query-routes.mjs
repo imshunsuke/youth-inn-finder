@@ -101,7 +101,15 @@ export async function handleQueryRequest(request, { db, clock = () => new Date()
         if (interactiveCollection) result.meta.collection.advanceUrl = "/api/collection";
       }
     }
-    return jsonResponse(result, 200, result.meta.pending ? { "Retry-After": String(result.meta.refreshAfterMs / 1000) } : {});
+    // Cache only settled observations. A short response cache must expire no
+    // later than either the catalog or the oldest underlying station sample.
+    const at = new Date(clock()).getTime();
+    const validUntil = Math.min(at + 60_000,
+      ...diagnostics.catalogs.map((x) => Date.parse(x.fetchedAt) + diagnostics.freshness.catalogMaxAgeMs),
+      ...diagnostics.observations.filter((x) => x.status === "fresh").map((x) => Date.parse(x.fetchedAt) +
+        (x.kind === "interval" ? diagnostics.freshness.intervalMaxAgeMs : diagnostics.freshness.calendarMaxAgeMs)));
+    return jsonResponse(result, 200, result.meta.pending ? { "Retry-After": String(result.meta.refreshAfterMs / 1000) }
+      : Number.isFinite(validUntil) && validUntil > at ? { "X-Snapshot-Valid-Until": String(validUntil) } : {});
   } catch (error) {
     const known = error instanceof AppError;
     const status = known ? error.status : 500;

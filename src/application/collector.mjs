@@ -42,22 +42,8 @@ export function createCollector({ db, clock = () => new Date(), fetchImpl = (...
   const store = createSnapshotStore({ db, clock });
   const now = () => clockDate(clock).getTime();
 
-  async function queueActiveIntervals(catalogs, lease) {
-    let rows;
-    try {
-      rows = (await db.prepare("SELECT id, conditions_json FROM reminders WHERE status='active' AND id>? ORDER BY id LIMIT 200")
-        .bind(lease.reminderCursor).all()).results ?? [];
-      if (rows.length < 200 && lease.reminderCursor) rows.push(...((await db.prepare(
-        "SELECT id, conditions_json FROM reminders WHERE status='active' AND id<=? ORDER BY id LIMIT ?")
-        .bind(lease.reminderCursor, 200 - rows.length).all()).results ?? []));
-    }
-    catch (error) {
-      if (String(error.message).includes("no such table")) {
-        await store.reconcileIntervalPriorities([], { lease, complete: true });
-        return { activeReminders: 0, accepted: 0, invalid: 0 };
-      }
-      throw error;
-    }
+  async function queueActiveIntervals(catalogs, lease, rows) {
+    if (!rows.length) return { activeReminders: 0, accepted: 0, invalid: 0, reminderCursor: lease.reminderCursor };
     const byType = new Map(catalogs.map((row) => [row.house_type, catalogItems(row)]));
     const tasks = new Map();
     let invalid = 0;
@@ -91,7 +77,7 @@ export function createCollector({ db, clock = () => new Date(), fetchImpl = (...
       lease = await store.acquireLease({ leaseMs });
     }
     if (!lease) return { status: "skipped", reason: "lease-held", requestsUsed: 0, budget };
-    let requestsUsed = 0;
+    let requestsUsed = 0, finished = false;
     const client = createOfficialClient({ clock, concurrency, cacheTtlMs: 0, timeoutMs, ...(baseUrl ? { baseUrl } : {}),
       fetchImpl: async (...args) => {
         if (requestsUsed >= budget) throw new AppError("采集请求预算已用完", { code: "COLLECTION_BUDGET_EXHAUSTED", status: 503 });
@@ -103,7 +89,8 @@ export function createCollector({ db, clock = () => new Date(), fetchImpl = (...
       catalogs: { attempted: 0, succeeded: 0, failed: 0 }, calendars: { attempted: 0, succeeded: 0, failed: 0 },
       intervals: { attempted: 0, succeeded: 0, failed: 0 } };
     try {
-      const rows = new Map((await store.readCollectorCatalogRows()).map((row) => [row.house_type, row]));
+      const inputs = await store.readCollectorInputs(lease);
+      const rows = new Map(inputs.catalogs.map((row) => [row.house_type, row]));
       const types = lease.catalogCursor === 1 ? ["1", "0"] : ["0", "1"];
       let nextCatalogCursor = lease.catalogCursor;
       for (const type of types) {
@@ -125,9 +112,9 @@ export function createCollector({ db, clock = () => new Date(), fetchImpl = (...
           report.catalogs.failed += 1;
         }
       }
-      const reminders = await queueActiveIntervals([...rows.values()], lease);
+      const reminders = await queueActiveIntervals([...rows.values()], lease, inputs.reminders);
       const allIds = [...new Set([...rows.values()].flatMap(catalogItems).map((item) => String(item.id)))].sort();
-      const calendarRows = new Map((await store.readCollectorCalendarRows(allIds)).map((row) => [row.station_id, row]));
+      const calendarRows = new Map(inputs.calendars.map((row) => [row.station_id, row]));
       const orderedIds = [...allIds.filter((id) => id > lease.calendarCursor), ...allIds.filter((id) => id <= lease.calendarCursor)];
       const dueCalendars = orderedIds.filter((id) => {
         const row = calendarRows.get(id);
@@ -138,10 +125,19 @@ export function createCollector({ db, clock = () => new Date(), fetchImpl = (...
       const dueIntervals = await store.dueIntervalJobs(remaining);
       // Share the slice evenly while both kinds are due. At one third, a cold
       // 90-station range can expire before its last stations are collected.
-      const intervalSlots = Math.min(dueIntervals.length, dueCalendars.length ? Math.max(1, Math.floor(remaining / 2)) : remaining);
+      const urgentCalendars = dueCalendars.filter((id) => {
+        const at = Date.parse(calendarRows.get(id)?.fetched_at ?? "");
+        return Number.isFinite(at) && now() - at >= 17 * 60_000;
+      });
+      const urgentCalendarCount = urgentCalendars.length;
+      // Close-to-expiry calendars get most of a small Cron slice. Leave one
+      // interval slot so reminder work cannot starve behind a cold calendar.
+      const intervalAllowance = urgentCalendarCount ? Math.max(1, remaining - urgentCalendarCount) : Math.max(1, Math.floor(remaining / 2));
+      const intervalSlots = Math.min(dueIntervals.length, dueCalendars.length ? intervalAllowance : remaining);
       const calendarSlots = Math.min(dueCalendars.length, Math.max(0, remaining - intervalSlots));
       const intervalCount = Math.min(dueIntervals.length, remaining - calendarSlots);
-      const selectedCalendars = dueCalendars.slice(0, calendarSlots);
+      const urgentIds = new Set(urgentCalendars);
+      const selectedCalendars = [...urgentCalendars, ...dueCalendars.filter((id) => !urgentIds.has(id))].slice(0, calendarSlots);
       const selectedIntervals = dueIntervals.slice(0, intervalCount);
       if (!await store.hasLease(lease)) return { ...report, status: "lease-lost", requestsUsed };
       const tasks = [...selectedCalendars.map((stationId) => ({ kind: "calendar", stationId })),
@@ -158,19 +154,18 @@ export function createCollector({ db, clock = () => new Date(), fetchImpl = (...
       }, concurrency);
       const calendars = outcomes.filter((item) => item.kind === "calendar");
       const intervals = outcomes.filter((item) => item.kind === "interval");
-      await store.saveCalendarBatch(calendars.filter((item) => item.ok), calendars.filter((item) => !item.ok), { lease });
-      await store.saveIntervalBatch(intervals.filter((item) => item.ok), intervals.filter((item) => !item.ok), { lease, refreshMs: intervalRefreshMs });
-      const advanced = await store.advanceCursor(lease, {
+      const advanced = await store.finishCollection(lease, { calendars, intervals, refreshMs: intervalRefreshMs, cursors: {
         calendarCursor: selectedCalendars.at(-1) ?? lease.calendarCursor, catalogCursor: nextCatalogCursor,
         reminderCursor: reminders.reminderCursor,
-      });
+      } });
+      finished = true;
       for (const [name, values] of [["calendars", calendars], ["intervals", intervals]]) {
         report[name] = { attempted: values.length, succeeded: values.filter((item) => item.ok).length, failed: values.filter((item) => !item.ok).length };
       }
       return { ...report, status: advanced ? "collected" : "lease-lost", requestsUsed, reminders,
         calendarCursor: selectedCalendars.at(-1) ?? lease.calendarCursor, queuedIntervalTasks: dueIntervals.length };
     } finally {
-      await store.releaseLease(lease);
+      if (!finished) await store.releaseLease(lease);
     }
   }
   return Object.freeze({ run });

@@ -15,7 +15,7 @@ test("collection accepts no caller-selected work, rejects foreign origins and en
   assert.equal((await app(req({ method: "POST", headers: { "Sec-Fetch-Site": "cross-site" } }))).status, 403);
   assert.equal(calls, 0);
   const response = await app(req({ method: "POST" }));
-  assert.equal(response.status, 200); assert.equal(response.headers.get("Retry-After"), "10"); assert.equal(calls, 1);
+  assert.equal(response.status, 200); assert.equal(response.headers.get("Retry-After"), "1"); assert.equal(calls, 1);
   assert.equal((await app(req({ method: "POST", body: new Uint8Array(0) }))).status, 200);
   assert.equal(calls, 2, "an empty stream in a Web runtime is also a bodyless request");
 });

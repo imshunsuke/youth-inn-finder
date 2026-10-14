@@ -146,11 +146,21 @@ async function loadCalendar({ force = false } = {}) {
   } catch (error) { if (error.name === "AbortError" || sequence !== calendarSequence) return; state.calendarError = error.status === 503 ? "房源数据正在准备，请稍后重试" : error.message; }
   finally { if (sequence === calendarSequence) { state.calendarLoading = false; render(); } }
 }
+function advanceInterval(key) {
+  collectionPump.drain(key, () => ({ meta: key === intervalKey() ? state.interval?.payload?.meta : null, visible: !document.hidden }), (report) => {
+    if (key !== intervalKey() || !report) return;
+    collectionNotice = report.reason === "daily-budget" ? "今日即时补查额度已用完，后台仍会定时更新" : "";
+    renderResults();
+  }).catch(() => { if (key === intervalKey()) { collectionNotice = "即时补查暂缓，稍后自动重试"; renderResults(); } });
+}
 async function loadInterval({ force = false } = {}) {
   clearTimeout(intervalTimer); intervalTimer = null; intervalController?.abort(); const sequence = ++intervalSequence;
   if (!state.endDate) { state.interval = null; render(); return; }
   const key = intervalKey(), cached = intervalCache.get(key);
-  if (!force && cached && Date.now() - cached.at < (cached.pending ? 10_000 : 60_000)) { state.interval = { ...cached, key }; render(); return; }
+  if (!force && cached && Date.now() - cached.at < (cached.pending ? 2000 : 60_000)) {
+    state.interval = { ...cached, key }; collectionPump.observe(key, cached.payload.meta);
+    advanceInterval(key); render(); scheduleAutoUpdate(); return;
+  }
   intervalController = new AbortController(); state.interval = { key, payload: cached?.payload || null, loading: true, pending: false, error: "" }; render();
   lastIntervalAttemptAt = Date.now(); lastIntervalAttemptKey = key;
   try {
@@ -158,13 +168,11 @@ async function loadInterval({ force = false } = {}) {
     if (sequence !== intervalSequence || key !== intervalKey()) return;
     const pending = isPending(result);
     if (!Array.isArray(result.payload?.data)) throw new Error("区间房源数据格式异常，请稍后重试");
-    state.interval = { key, payload: result.payload, pending, ...intervalRetry({ status: result.status, retryAfter: result.retryAfter, refreshAfterMs: result.payload.meta?.refreshAfterMs }) };
+    collectionPump.observe(key, result.payload.meta);
+    state.interval = { key, payload: result.payload, pending, ...intervalRetry({ status: result.status, retryAfter: result.retryAfter,
+      refreshAfterMs: Math.max(result.payload.meta?.refreshAfterMs || 0, collectionPump.pollDelay(key)) }, Date.now(), { minimumMs: 2000 }) };
     intervalCache.set(key, { ...state.interval, at: Date.now() });
-    collectionPump.advance(result.payload.meta, { visible: !document.hidden }).then((report) => {
-      if (key !== intervalKey() || !report) return;
-      collectionNotice = report.reason === "daily-budget" ? "今日即时补查额度已用完，后台仍会定时更新" : "";
-      renderResults();
-    }).catch(() => { if (key === intervalKey()) { collectionNotice = "即时补查暂缓，稍后自动重试"; renderResults(); } });
+    advanceInterval(key);
   } catch (error) { if (error.name === "AbortError" || sequence !== intervalSequence) return; state.interval = { key, payload: cached?.payload || null, error: error.message, ...intervalRetry(error) }; }
   finally { if (sequence === intervalSequence) { if (state.interval) state.interval.loading = false; render(); scheduleAutoUpdate(); } }
 }
@@ -248,12 +256,12 @@ function autoUpdate() {
   if (state.endDate && !intervalTimer) {
     const key = intervalKey(), current = state.interval?.key === key ? state.interval : null;
     const sinceAttempt = key === lastIntervalAttemptKey ? Date.now() - lastIntervalAttemptAt : Infinity;
-    if (!current?.loading && current?.retryable !== false && Date.now() >= (current?.retryAt || 0) && sinceAttempt >= 10_000 && needsSnapshotUpdate(current?.payload, current?.error, current?.pending)) loadInterval({ force: true });
+    if (!current?.loading && current?.retryable !== false && Date.now() >= (current?.retryAt || 0) && sinceAttempt >= collectionPump.pollDelay(key) && needsSnapshotUpdate(current?.payload, current?.error, current?.pending)) loadInterval({ force: true });
   }
 }
 function scheduleAutoUpdate() {
   clearTimeout(autoUpdateTimer);
-  if (!document.hidden) autoUpdateTimer = setTimeout(() => { autoUpdateTimer = null; autoUpdate(); scheduleAutoUpdate(); }, state.endDate ? 10_000 : 60_000);
+  if (!document.hidden) autoUpdateTimer = setTimeout(() => { autoUpdateTimer = null; autoUpdate(); scheduleAutoUpdate(); }, state.endDate ? collectionPump.pollDelay(intervalKey()) : 60_000);
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) autoUpdate(); scheduleAutoUpdate(); });
 window.addEventListener("pagehide", () => clearTimeout(autoUpdateTimer));

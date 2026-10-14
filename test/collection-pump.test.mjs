@@ -28,8 +28,22 @@ test("overlapping ticks coalesce and failures honor Retry-After before resuming"
 });
 test("network time does not add a second cooldown to successful collection",async()=>{
   let at=0,calls=0;
-  const pump=createCollectionPump({clock:()=>at,requestImpl:async()=>{calls++;at+=2000;return{payload:{status:"collected"},retryAfter:"10"};}});
-  await pump.advance(pending); assert.equal(at,2000);
-  at=9999; assert.equal(await pump.advance(pending),null);
-  at=10_000; await pump.advance(pending); assert.equal(calls,2);
+  const pump=createCollectionPump({clock:()=>at,requestImpl:async()=>{calls++;at+=500;return{payload:{status:"collected"},retryAfter:"10"};}});
+  await pump.advance(pending); assert.equal(at,500);
+  at=999; assert.equal(await pump.advance(pending),null);
+  at=1250; await pump.advance(pending); assert.equal(calls,2);
+});
+
+test('a visible pending range drains continuously, stops on completion and never doubles in-flight requests',async()=>{
+ let at=0,calls=0,active=0,max=0,meta={...pending},progress=0;
+ const pump=createCollectionPump({clock:()=>at,wait:async(ms)=>{at+=ms;},requestImpl:async()=>{calls++;active++;max=Math.max(max,active);at+=600;active--;return{payload:{status:'collected',succeeded:6},retryAfter:'1'};}});
+ const read=()=>({meta,visible:true});const run=pump.drain('range',read,(r)=>{progress+=r.succeeded;if(progress>=90)meta={pending:false};});assert.equal(pump.drain('range',read),run);await run;
+ assert.equal(calls,15);assert.equal(max,1);assert.ok(at<=20000);pump.observe('range',meta);assert.equal(pump.pollDelay('range'),10000);
+});
+
+test('fast draining is bounded to one minute and stops when hidden; a later read cannot renew its fast window',async()=>{
+ let at=0,calls=0,visible=true;const pump=createCollectionPump({clock:()=>at,wait:async(ms)=>{at+=ms;},requestImpl:async()=>{calls++;return{payload:{status:'collected'},retryAfter:'1'};}});
+ const read=()=>({meta:pending,visible});await pump.drain('range',read);assert.equal(at,60000);assert.equal(calls,48);assert.equal(pump.pollDelay('range'),10000);
+ await pump.drain('range',read);assert.equal(calls,49);assert.equal(pump.pollDelay('range'),10000);
+ visible=false;await pump.drain('other',read);assert.equal(calls,49);
 });

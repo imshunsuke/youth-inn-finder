@@ -29,12 +29,12 @@ export function intervalFeedback(meta = {}) {
   };
 }
 
-export function intervalRetry({ status = 200, retryAfter, refreshAfterMs = 60_000 } = {}, now = Date.now()) {
+export function intervalRetry({ status = 200, retryAfter, refreshAfterMs = 60_000 } = {}, now = Date.now(), { minimumMs = 10_000 } = {}) {
   const seconds = typeof retryAfter === "string" && /^\d+$/.test(retryAfter.trim()) ? Number(retryAfter) * 1000 : NaN;
   const dateDelay = typeof retryAfter === "string" ? Date.parse(retryAfter) - now : NaN;
   const delay = Number.isFinite(seconds) ? seconds : Number.isFinite(dateDelay) ? dateDelay : 0;
   return {
     retryable: !(status >= 400 && status < 500 && ![408, 429].includes(status)),
-    retryAt: now + Math.max(10_000, Number.isFinite(refreshAfterMs) ? refreshAfterMs : 0, delay),
+    retryAt: now + Math.max(minimumMs, Number.isFinite(refreshAfterMs) ? refreshAfterMs : 0, delay),
   };
 }

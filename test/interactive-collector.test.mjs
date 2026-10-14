@@ -33,7 +33,7 @@ test("visitors share one in-flight slice, persistent cooldown and Cron lease", a
   assert.ok(concurrent.every((r) => r.status === "throttled"));
   assert.equal(await store.acquireLease(), null);
   unblock(); assert.equal((await first).succeeded, 9);
-  assert.equal(max, 3); assert.equal(calls, 9);
+  assert.equal(max, 6); assert.equal(calls, 9);
   assert.equal((await collectInteractiveIntervals({ db, clock, fetchImpl })).status, "throttled");
   advance(10_000);
   const cron = await store.acquireLease();
@@ -78,7 +78,8 @@ test("failures remain unknown and preserve backoff; expired foreground workers c
   const failed = await collectInteractiveIntervals({ db, clock, fetchImpl: async () => new Response("unavailable", { status: 503 }) });
   assert.equal(failed.failed, 1); assert.equal((await read()).get("000").status, "missing");
   advance(10_000);
-  assert.equal((await collectInteractiveIntervals({ db, clock, fetchImpl: positive })).attempted, 0);
+  const waiting = await collectInteractiveIntervals({ db, clock, fetchImpl: positive });
+  assert.equal(waiting.attempted, 0); assert.equal(waiting.retryAfterMs, 50_000);
   advance(60_000);
   let unblock; const delayed = new Promise((resolve) => { unblock = resolve; });
   const old = collectInteractiveIntervals({ db, clock, fetchImpl: async () => { await delayed; return positive(); } });
@@ -98,8 +99,8 @@ test("validated pending query schedules work without delaying the response; read
     onIntervalPending: () => tasks.push(collectInteractiveIntervals({ db, clock, fetchImpl: async () => { await delayed; return positive(); } }).then(() => { finished = true; })) });
   const url = "https://finder.example.test/api/available?date=2026-10-15&endDate=2026-10-21";
   const response = await app(new Request(url));
-  assert.equal(finished, false); assert.equal(response.headers.get("Retry-After"), "10");
-  assert.equal((await response.json()).meta.refreshAfterMs, 10_000);
+  assert.equal(finished, false); assert.equal(response.headers.get("Retry-After"), "2");
+  assert.equal((await response.json()).meta.refreshAfterMs, 2000);
   unblock(); await Promise.all(tasks);
   const ready = await app(new Request(url));
   assert.equal((await ready.json()).meta.pending, false); assert.equal(tasks.length, 1);
@@ -125,4 +126,9 @@ test("production Worker separates snapshot reads from a bounded collection invoc
   const second = await worker.fetch(req(), env);
   const payload = await second.json();
   assert.equal(payload.meta.pending, false); assert.equal(payload.data.length, 1);
+});
+
+test('a request just before the shared cooldown gets a short exact retry instead of another two seconds',async(t)=>{
+ const {db,clock,queue,advance}=await fixture(t);await queue();await collectInteractiveIntervals({db,clock,budget:6,fetchImpl:positive});advance(999);
+ const early=await collectInteractiveIntervals({db,clock,budget:6,fetchImpl:positive});assert.equal(early.status,'throttled');assert.equal(early.retryAfterMs,100);advance(100);assert.equal((await collectInteractiveIntervals({db,clock,budget:6,fetchImpl:positive})).attempted,6);
 });

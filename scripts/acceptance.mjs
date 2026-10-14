@@ -3,9 +3,11 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawn } from "node:child_process";
 import { addDays, todayInShanghai } from "../src/domain/dates.mjs";
+import { createCollectionPump } from "../public/lib/collection-pump.mjs";
 
 export const CRITERIA = Object.freeze({ durationMinutes: 70, idleStartMinutes: 10, idleEndMinutes: 35,
   firstResultMs: 45_000, fullRangeMs: 600_000, httpP95Ms: 3000, availability: 0.99, cacheAgeMs: 1200_000 });
+export const PERFORMANCE_CRITERIA = Object.freeze({ ...CRITERIA, firstResultMs: 5000, fullRangeMs: 90_000, httpP95Ms: 1000 });
 const paths = new Set(["/api/available", "/api/calendar", "/api/collection", "/api/health", "/api/station"]);
 const percentile = (values, p) => values.length ? [...values].sort((a,b) => a-b)[Math.max(0, Math.ceil(values.length * p) - 1)] : null;
 
@@ -39,7 +41,7 @@ export function inspectSnapshot(p, at = Date.now()) {
   return [...new Set(issues)];
 }
 
-export function summarize(samples, traces, { durationMs, expectedDurationMs, idleStartMs, idleEndMs, expectedDeployment } = {}) {
+export function summarize(samples, traces, { durationMs, expectedDurationMs, idleStartMs, idleEndMs, expectedDeployment, criteria = CRITERIA } = {}) {
   const queries = samples.filter((s) => s.kind === "query"), errors = samples.filter((s) => s.http !== 200 || s.error);
   const violations = samples.flatMap((s) => s.issues ?? []), gates = [];
   if (durationMs < expectedDurationMs) gates.push("DURATION_INCOMPLETE");
@@ -61,10 +63,10 @@ export function summarize(samples, traces, { durationMs, expectedDurationMs, idl
     ranges[date] = { firstResultMs: first?.elapsedMs ?? null, fullMs: full?.elapsedMs ?? null,
       resumeFresh: resumed[0]?.fresh ?? null, resumeStale: resumed[0]?.stale ?? null,
       recoveryMs: resumedFull ? resumedFull.elapsedMs-idleEndMs : null, fullAfterSecondExpiry: Boolean(laterFull) };
-    if (!first || first.elapsedMs>CRITERIA.firstResultMs) gates.push(`FIRST_RESULT:${date}`);
-    if (!full || full.elapsedMs>CRITERIA.fullRangeMs) gates.push(`FULL_RANGE:${date}`);
+    if (!first || first.elapsedMs>criteria.firstResultMs) gates.push(`FIRST_RESULT:${date}`);
+    if (!full || full.elapsedMs>criteria.fullRangeMs) gates.push(`FULL_RANGE:${date}`);
     if (!resumed.length || resumed[0].fresh !== 0 || !resumed[0].stale) gates.push(`NATURAL_EXPIRY_NOT_PROVEN:${date}`);
-    if (!resumedFull || resumedFull.elapsedMs-idleEndMs>CRITERIA.fullRangeMs) gates.push(`EXPIRY_RECOVERY:${date}`);
+    if (!resumedFull || resumedFull.elapsedMs-idleEndMs>criteria.fullRangeMs) gates.push(`EXPIRY_RECOVERY:${date}`);
     if (!laterFull) gates.push(`SECOND_CACHE_CYCLE:${date}`);
   }
   if (Object.keys(ranges).length < 3) gates.push("THREE_RANGES_REQUIRED");
@@ -73,7 +75,7 @@ export function summarize(samples, traces, { durationMs, expectedDurationMs, idl
   if (new Set(idleCalendars.map((s)=>s.latestSample).filter(Boolean)).size<2) gates.push("CRON_PROGRESS_NOT_PROVEN");
   if (idleCalendars.some((s)=>s.http===200 && s.total>0 && s.fresh/s.total<.85)) gates.push("BACKGROUND_CALENDAR_FRESHNESS");
   const queryP95Ms = percentile(queries.filter((s)=>s.http===200).map((s)=>s.durationMs),.95);
-  if (queryP95Ms === null || queryP95Ms>CRITERIA.httpP95Ms) gates.push("QUERY_LATENCY_P95");
+  if (queryP95Ms === null || queryP95Ms>criteria.httpP95Ms) gates.push("QUERY_LATENCY_P95");
   const currentTraces = traces.filter((s)=>s.deployment===expectedDeployment);
   if (currentTraces.length<20) gates.push("RUNTIME_OBSERVABILITY_INCOMPLETE");
   const cpuOverBudget = currentTraces.filter((s)=>s.cpuMs>10).length;
@@ -91,7 +93,7 @@ export function summarize(samples, traces, { durationMs, expectedDurationMs, idl
       terminations: currentTraces.filter((s)=>s.outcome === "exceededCpu" || s.outcome === "exceededMemory").length,byPath } };
 }
 
-export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acceptance", tail = false, offset = 12 } = {}) {
+export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acceptance", tail = false, offset = 12, fast = false } = {}) {
   const base = new URL(baseUrl);
   if (base.username || base.password || base.search || base.hash || base.pathname !== "/" ||
       !(base.protocol === "https:" || base.protocol === "http:" && ["127.0.0.1", "localhost"].includes(base.hostname))) throw new Error("Use a public HTTPS origin or a local development origin");
@@ -101,10 +103,11 @@ export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acc
   await writeFile(resolve(root,"samples.jsonl"),"",{flag:"wx"});
   await writeFile(resolve(root,"runtime.jsonl"),"",{flag:"wx"});
   const started = Date.now(), today = todayInShanghai(), dates = [offset,offset+1,offset+2].map((days)=>addDays(today,days)), endDate=addDays(today,offset+3);
-  const samples = [], traces = [], suppressedUntil = new Map(); let expectedDeployment, tailChild, tailBuffer = "", lastMinute = -1, stopped = false;
+  const samples = [], traces = [], suppressedUntil = new Map(); let expectedDeployment, tailChild, tailBuffer = "", lastMinute = -1, stopped = false, latestMeta = null, pumpTask;
+  const criteria = fast ? PERFORMANCE_CRITERIA : CRITERIA;
   const stop=()=>{stopped=true;}; process.once("SIGINT",stop); process.once("SIGTERM",stop);
   const metadata = { startedAt: new Date(started).toISOString(), baseUrl: base.origin, dates, endDate, minutes,
-    gitHead: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), criteria: CRITERIA };
+    gitHead: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), criteria, fast };
   const save = (file, row) => appendFile(resolve(root,file), JSON.stringify(row)+"\n");
   if (tail) {
     tailChild = spawn("npx", ["wrangler", "tail", "youth-inn-finder", "--format", "json"], { stdio: ["ignore","pipe","pipe"] });
@@ -131,7 +134,7 @@ export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acc
       const text=await r.text(); if(text.length>1_000_000) throw new Error("oversize"); payload=JSON.parse(text);
       const c=payload.meta?.snapshotCoverage;
       row={ kind,date,at:new Date().toISOString(),startedElapsedMs:began-started,elapsedMs:Date.now()-started,http:r.status,durationMs:Date.now()-began,
-        deployment, fresh:c?.freshStations,total:c?.totalStations,stale:c?.staleStations,missing:c?.missingStations,
+        deployment, retryAfter:retry, queryCache:r.headers.get("X-Query-Cache"), fresh:c?.freshStations,total:c?.totalStations,stale:c?.staleStations,missing:c?.missingStations,
         unknown:payload.meta?.coverage?.unknownStations, rooms:payload.data?.length,latestSample:payload.meta?.latestFetchedAt,
         catalogStatus:payload.meta?.catalogStatus,code:typeof payload.code==="string"?payload.code:undefined,
         collectionStatus:kind==="collection"?payload.status:undefined,reason:kind==="collection"?payload.reason:undefined,
@@ -140,6 +143,11 @@ export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acc
     } catch { row={kind,date,at:new Date().toISOString(),elapsedMs:Date.now()-started,http,deployment,durationMs:Date.now()-began,error:"TRANSPORT_OR_INVALID_RESPONSE"}; }
     samples.push(row); await save("samples.jsonl",row); return { row,payload };
   }
+  const pump = createCollectionPump({ requestImpl: async () => {
+    const result = await sample("collection", "/api/collection", { method: "POST" });
+    if (result.row.http !== 200) throw Object.assign(new Error("Collection unavailable"), { status:result.row.http, retryAfter:result.row.retryAfter });
+    return { payload:result.payload, retryAfter:result.row.retryAfter };
+  } });
   try {
     const initial=await sample("health","/api/health"); expectedDeployment=initial.row.deployment;
     if (!expectedDeployment) throw new Error("Deployment identity header is required before a live soak");
@@ -153,8 +161,15 @@ export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acc
         const results=await Promise.all(dates.map((date)=>sample("query",`/api/available?date=${date}&endDate=${endDate}&onlyOnShelf=true&limit=200&includeOfficialDetails=false`,{date})));
         // Match the page: its next read is ten seconds after the previous read
         // completes, not after an earlier wall-clock tick or after collection.
-        nextTick=Date.now()+10_000;
-        if (results.some((r)=>r.payload?.meta?.collection?.advanceUrl==="/api/collection")) await sample("collection","/api/collection",{method:"POST"});
+        latestMeta = results.find((r)=>r.payload?.meta?.pending && r.payload.meta.collection?.advanceUrl==="/api/collection")?.payload.meta ?? { pending:false };
+        if (fast) {
+          pump.observe("ranges",latestMeta);
+          pumpTask = pump.drain("ranges", () => { const age=Date.now()-started; return { meta:latestMeta, visible:!stopped && age<minutes*60_000 && !(age>=600_000 && age<2100_000) }; }).catch(()=>{});
+          nextTick=Date.now()+pump.pollDelay("ranges");
+        } else {
+          nextTick=Date.now()+10_000;
+          if (latestMeta.pending) await sample("collection","/api/collection",{method:"POST"});
+        }
         if (results.some((r)=>!r.row.skipped && (r.row.http===429 || r.row.http===200 && r.row.deployment!==expectedDeployment || r.row.issues?.length))) {
           console.log(JSON.stringify({critical:"LIVE_GATE_FAILED",minute})); break;
         }
@@ -163,9 +178,10 @@ export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acc
       await new Promise((resolve)=>setTimeout(resolve,Math.max(250,nextTick-Date.now())));
     }
   } finally {
+    stopped=true; await pumpTask;
     process.removeListener("SIGINT",stop); process.removeListener("SIGTERM",stop);
     tailChild?.kill("SIGTERM");
-    const report=summarize(samples,traces,{durationMs:Date.now()-started,expectedDurationMs:minutes*60_000,idleStartMs:600_000,idleEndMs:2100_000,expectedDeployment});
+    const report=summarize(samples,traces,{durationMs:Date.now()-started,expectedDurationMs:minutes*60_000,idleStartMs:600_000,idleEndMs:2100_000,expectedDeployment,criteria});
     await writeFile(resolve(root,"report.json"),JSON.stringify({...metadata,...report},null,2));
     console.log(JSON.stringify({ report:resolve(root,"report.json"),...report }));
   }
@@ -175,6 +191,7 @@ export async function runAcceptance({ baseUrl, minutes = 70, output = ".data/acc
 if (process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   const options={};
   for(let i=2;i<process.argv.length;i++) { const key=process.argv[i]; if(key==="--tail") options.tail=true;
+    else if(key==="--fast") options.fast=true;
     else if(["--url","--minutes","--output","--offset"].includes(key)) { const value=process.argv[++i]; options[key==="--url"?"baseUrl":key.slice(2)]=["--minutes","--offset"].includes(key)?Number(value):value; }
     else throw new Error("Unknown acceptance option"); }
   const report=await runAcceptance(options); if(report.functional!=="PASS") process.exitCode=1;

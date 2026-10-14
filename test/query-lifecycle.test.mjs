@@ -206,3 +206,25 @@ test("ninety simulated minutes: three city ranges share a queue, survive faults 
   const quota = (await db.prepare("SELECT interactive_requests AS n FROM query_collector_state").first()).n;
   assert.ok(quota <= 6000); t.diagnostic(`official requests=${calls}, interactive quota=${quota}, max public jobs=${maxQueued}`);
 });
+
+test('three cold 90-station ranges can finish within a minute with the same daily quota and at most six simultaneous fetches',async(t)=>{
+ const {db,clock,store,advance}=await fixture(t);const items=Array.from({length:90},(_,id)=>({id:String(id),name:'驿站'+id,isOnShelf:true}));await store.saveCatalog('0',{items,fetchedAt:clock().toISOString()});
+ let calls=0,active=0,max=0;const fetchImpl=async()=>{calls++;active++;max=Math.max(max,active);await new Promise(r=>setImmediate(r));active--;return new Response(JSON.stringify({success:true,data:{idleCnt:1}}));};
+ const app=createApp({env:{DB:db,APP_SECRET:'unit-test-secret-with-at-least-32-bytes'},clock,interactiveCollection:true,collectIntervals:(options)=>collectInteractiveIntervals({...options,fetchImpl})});
+ const dates=['2026-10-20','2026-10-21','2026-10-22'];let fullAt=null,firstAt=null;
+ for(let second=0;second<=60;second++){
+  if(second%2===0){const values=await Promise.all(dates.map(async(date)=>{const r=await app(new Request(`https://finder.test/api/available?date=${date}&endDate=2026-10-25&includeOfficialDetails=false`));assert.equal(r.status,200);return r.json();}));
+   if(values.every(x=>x.meta.snapshotCoverage.freshStations>0)&&firstAt===null)firstAt=second;
+   if(values.every(x=>x.meta.snapshotCoverage.freshStations===90&&x.meta.coverage.unknownStations===0)){fullAt=second;break;}}
+  const r=await app(new Request('https://finder.test/api/collection',{method:'POST'}));assert.equal(r.status,200);advance(1000);
+ }
+ assert.ok(firstAt<=2);assert.ok(fullAt<=60,`full at ${fullAt}`);assert.equal(calls,270);assert.equal(max,6);assert.equal((await db.prepare('SELECT interactive_requests FROM query_collector_state').first()).interactive_requests,270);
+});
+
+test('three stalled date pages stay inside admission during a bounded fast window and slower retry period',async(t)=>{
+ const {db,clock,advance}=await fixture(t);const app=createApp({env:{DB:db,APP_SECRET:'unit-test-secret-with-at-least-32-bytes'},clock,queryHandler:async()=>new Response('ok')});
+ for(let second=0;second<600;second++){
+  if(second% (second<60?2:10)===0) for(const date of ['2026-10-20','2026-10-21','2026-10-22'])assert.equal((await app(new Request(`https://finder.test/api/available?date=${date}&endDate=2026-10-25`))).status,200);
+  advance(1000);
+ }
+});

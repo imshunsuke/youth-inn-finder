@@ -5,6 +5,9 @@ import { createSnapshotClient } from "./infrastructure/snapshot-store.mjs";
 import { runMonitor } from "./application/monitor.mjs";
 import { createReminderStore } from "./infrastructure/reminder-store.mjs";
 import { COLLECTION_CRON, COLLECTION_POLICY } from "./application/collection-policy.mjs";
+import { createQueryResponseCache } from "./infrastructure/query-response-cache.mjs";
+
+const queryCaches = new WeakMap();
 
 export async function runScheduled(env, { clock = () => new Date(), fetchImpl = (...args) => globalThis.fetch(...args), phase = "all" } = {}) {
   if (!env.DB) return { disabled: true, reason: "storage-unavailable" };
@@ -33,7 +36,8 @@ export async function runScheduled(env, { clock = () => new Date(), fetchImpl = 
 
 export default {
   async fetch(request, env) {
-    const response = await createApp({ env, interactiveCollection: true })(request);
+    if (env.DB && !queryCaches.has(env.DB)) queryCaches.set(env.DB, createQueryResponseCache());
+    const response = await createApp({ env, interactiveCollection: true, queryCache: env.DB ? queryCaches.get(env.DB) : undefined })(request);
     if (env.CF_VERSION_METADATA?.id) response.headers.set("X-Deployment-Id", env.CF_VERSION_METADATA.id);
     return response;
   },
