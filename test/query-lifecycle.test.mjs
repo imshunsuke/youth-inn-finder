@@ -224,7 +224,7 @@ test('three cold 90-station ranges can finish within a minute with the same dail
 test('three stalled date pages stay inside admission during a bounded fast window and slower retry period',async(t)=>{
  const {db,clock,advance}=await fixture(t);const app=createApp({env:{DB:db,APP_SECRET:'unit-test-secret-with-at-least-32-bytes'},clock,queryHandler:async()=>new Response('ok')});
  for(let second=0;second<600;second++){
-  if(second% (second<60?2:10)===0) for(const date of ['2026-10-20','2026-10-21','2026-10-22'])assert.equal((await app(new Request(`https://finder.test/api/available?date=${date}&endDate=2026-10-25`))).status,200);
+  if(second% (second<5?1:second<60?2:10)===0) for(const date of ['2026-10-20','2026-10-21','2026-10-22'])assert.equal((await app(new Request(`https://finder.test/api/available?date=${date}&endDate=2026-10-25`))).status,200);
   advance(1000);
  }
 });

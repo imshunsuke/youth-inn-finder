@@ -97,7 +97,7 @@ export async function handleQueryRequest(request, { db, clock = () => new Date()
       result.meta.collection = { status: queued.capacityLimited ? "capacity-limited" : queued.accepted > 0 ? "queued" : "ready", ...queued };
       if (queued.accepted > 0 && (onIntervalPending || interactiveCollection)) {
         onIntervalPending?.();
-        result.meta.refreshAfterMs = INTERACTIVE_REFRESH_MS;
+        result.meta.refreshAfterMs = result.meta.snapshotCoverage.freshStations === 0 ? 1000 : INTERACTIVE_REFRESH_MS;
         if (interactiveCollection) result.meta.collection.advanceUrl = "/api/collection";
       }
     }

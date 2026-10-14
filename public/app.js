@@ -170,7 +170,7 @@ async function loadInterval({ force = false } = {}) {
     if (!Array.isArray(result.payload?.data)) throw new Error("区间房源数据格式异常，请稍后重试");
     collectionPump.observe(key, result.payload.meta);
     state.interval = { key, payload: result.payload, pending, ...intervalRetry({ status: result.status, retryAfter: result.retryAfter,
-      refreshAfterMs: Math.max(result.payload.meta?.refreshAfterMs || 0, collectionPump.pollDelay(key)) }, Date.now(), { minimumMs: 2000 }) };
+      refreshAfterMs: Math.max(result.payload.meta?.refreshAfterMs || 0, collectionPump.pollDelay(key)) }, Date.now(), { minimumMs: 1000 }) };
     intervalCache.set(key, { ...state.interval, at: Date.now() });
     advanceInterval(key);
   } catch (error) { if (error.name === "AbortError" || sequence !== intervalSequence) return; state.interval = { key, payload: cached?.payload || null, error: error.message, ...intervalRetry(error) }; }

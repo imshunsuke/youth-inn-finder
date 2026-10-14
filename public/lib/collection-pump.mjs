@@ -5,13 +5,17 @@ import { intervalRetry } from "./interval-status.mjs";
 // catalog parsing and upstream work do not share the same free CPU budget.
 export function createCollectionPump({ requestImpl = request, clock = () => Date.now(),
   wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
-  let inFlight = null, retryAt = 0, draining = null, burstKey = null, burstUntil = 0;
+  let inFlight = null, retryAt = 0, draining = null, burstKey = null, burstUntil = 0, waitingForFirst = false;
   const pump = {
     observe(key, meta) {
+      waitingForFirst = meta?.snapshotCoverage?.freshStations === 0;
       if (meta?.pending && key !== burstKey) { burstKey = key; burstUntil = clock() + 60_000; }
       else if (!meta?.pending && key === burstKey) { burstKey = null; burstUntil = 0; }
     },
-    pollDelay(key) { return key === burstKey && clock() < burstUntil ? 2000 : 10_000; },
+    pollDelay(key) {
+      if (key !== burstKey || clock() >= burstUntil) return 10_000;
+      return waitingForFirst && clock() < burstUntil - 55_000 ? 1000 : 2000;
+    },
     advance(meta, { visible = true } = {}) {
       if (!visible || !meta?.pending || meta.collection?.advanceUrl !== "/api/collection") return Promise.resolve(null);
       if (inFlight) return inFlight;
@@ -38,7 +42,7 @@ export function createCollectionPump({ requestImpl = request, clock = () => Date
     drain(key, read, onProgress = () => {}) {
       const current = read(); pump.observe(key, current?.meta);
       if (draining) return draining;
-      if (pump.pollDelay(key) !== 2000) return pump.advance(current?.meta, { visible: current?.visible }).then(onProgress);
+      if (pump.pollDelay(key) === 10_000) return pump.advance(current?.meta, { visible: current?.visible }).then(onProgress);
       draining = (async () => {
         while (clock() < burstUntil && key === burstKey) {
           const next = read();

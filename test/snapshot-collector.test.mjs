@@ -179,11 +179,11 @@ test("collector uses slim catalog/calendar reads while preserving fresh raw offi
   assert.equal(details.lxfs, "fixture-contact");
 });
 
-test('ordinary collection batches planning and fenced completion into at most five D1 round trips',async(t)=>{
+test('ordinary collection batches lock, planning and fenced completion into two D1 round trips',async(t)=>{
  const db=await applyMigrations(createTestDb());t.after(()=>db.close());const clock=()=>new Date('2026-10-14T00:00:00Z'),store=createSnapshotStore({db,clock});await store.saveCatalog('0',{items:Array.from({length:90},(_,id)=>({id:String(id),name:'站'+id})),fetchedAt:clock().toISOString()});await store.saveCatalog('1',{items:[],fetchedAt:clock().toISOString()});
  let trips=0;const wrap=(s)=>new Proxy(s,{get(target,p){if(p==='bind')return(...v)=>wrap(target.bind(...v));if(['first','all','run'].includes(p))return(...a)=>{trips++;return target[p](...a);};const v=target[p];return typeof v==='function'?v.bind(target):v;}});
  const adapter={prepare:(...a)=>wrap(db.prepare(...a)),batch:(s)=>{trips++;return db.batch(s);}};
- const report=await createCollector({db:adapter,clock,budget:10,fetchImpl:async()=>new Response(JSON.stringify({success:true,data:[{applyDate:'2026-10-20',applyNumber:2}]}))}).run();assert.equal(report.requestsUsed,10);assert.ok(trips<=5,`${trips} D1 round trips`);
+ const report=await createCollector({db:adapter,clock,budget:10,fetchImpl:async()=>new Response(JSON.stringify({success:true,data:[{applyDate:'2026-10-20',applyNumber:2}]}))}).run();assert.equal(report.requestsUsed,10);assert.ok(trips<=2,`${trips} D1 round trips`);
 });
 
 test('an expired completion cannot save data or release a newer lease, including the combined final transaction',async(t)=>{

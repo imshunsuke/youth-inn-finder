@@ -69,7 +69,8 @@ export function createCollector({ db, clock = () => new Date(), fetchImpl = (...
   }
 
   async function run() {
-    let lease = await store.acquireLease({ leaseMs });
+    const initial = await store.acquireCollectionInputs({ leaseMs });
+    let lease = initial?.lease ?? null;
     const deadline = now() + leaseWaitMs;
     if (!lease && leaseWaitMs > 0) await store.requestCollectionTurn(leaseWaitMs + 5000);
     while (!lease && now() < deadline) {
@@ -89,7 +90,7 @@ export function createCollector({ db, clock = () => new Date(), fetchImpl = (...
       catalogs: { attempted: 0, succeeded: 0, failed: 0 }, calendars: { attempted: 0, succeeded: 0, failed: 0 },
       intervals: { attempted: 0, succeeded: 0, failed: 0 } };
     try {
-      const inputs = await store.readCollectorInputs(lease);
+      const inputs = initial?.inputs ?? await store.readCollectorInputs(lease);
       const rows = new Map(inputs.catalogs.map((row) => [row.house_type, row]));
       const types = lease.catalogCursor === 1 ? ["1", "0"] : ["0", "1"];
       let nextCatalogCursor = lease.catalogCursor;
@@ -122,7 +123,7 @@ export function createCollector({ db, clock = () => new Date(), fetchImpl = (...
         return (row?.next_attempt_at ?? 0) <= now() && (!row?.has_payload || !Number.isFinite(fetchedAt) || now() < fetchedAt || now() - fetchedAt >= calendarRefreshMs);
       });
       const remaining = budget - requestsUsed;
-      const dueIntervals = await store.dueIntervalJobs(remaining);
+      const dueIntervals = inputs.reminders.length ? await store.dueIntervalJobs(remaining) : inputs.intervals.slice(0, remaining);
       // Share the slice evenly while both kinds are due. At one third, a cold
       // 90-station range can expire before its last stations are collected.
       const urgentCalendars = dueCalendars.filter((id) => {
@@ -139,7 +140,7 @@ export function createCollector({ db, clock = () => new Date(), fetchImpl = (...
       const urgentIds = new Set(urgentCalendars);
       const selectedCalendars = [...urgentCalendars, ...dueCalendars.filter((id) => !urgentIds.has(id))].slice(0, calendarSlots);
       const selectedIntervals = dueIntervals.slice(0, intervalCount);
-      if (!await store.hasLease(lease)) return { ...report, status: "lease-lost", requestsUsed };
+      if (now() >= lease.expiresAt) return { ...report, status: "lease-lost", requestsUsed };
       const tasks = [...selectedCalendars.map((stationId) => ({ kind: "calendar", stationId })),
         ...selectedIntervals.map((job) => ({ kind: "interval", stationId: job.station_id, startDate: job.start_date, endDate: job.end_date, failureCount: job.failure_count }))];
       const outcomes = await mapConcurrent(tasks, async (task) => {

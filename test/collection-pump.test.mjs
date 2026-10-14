@@ -47,3 +47,8 @@ test('fast draining is bounded to one minute and stops when hidden; a later read
  await pump.drain('range',read);assert.equal(calls,49);assert.equal(pump.pollDelay('range'),10000);
  visible=false;await pump.drain('other',read);assert.equal(calls,49);
 });
+
+test('one-second progress reads stop after the first sample or five seconds, without extending the fast window',()=>{
+ let at=0;const pump=createCollectionPump({clock:()=>at});const empty={...pending,snapshotCoverage:{freshStations:0}};pump.observe('range',empty);assert.equal(pump.pollDelay('range'),1000);
+ pump.observe('range',{...pending,snapshotCoverage:{freshStations:1}});assert.equal(pump.pollDelay('range'),2000);pump.observe('range',empty);at=5000;assert.equal(pump.pollDelay('range'),2000);at=60000;pump.observe('range',empty);assert.equal(pump.pollDelay('range'),10000);
+});

@@ -99,8 +99,8 @@ test("validated pending query schedules work without delaying the response; read
     onIntervalPending: () => tasks.push(collectInteractiveIntervals({ db, clock, fetchImpl: async () => { await delayed; return positive(); } }).then(() => { finished = true; })) });
   const url = "https://finder.example.test/api/available?date=2026-10-15&endDate=2026-10-21";
   const response = await app(new Request(url));
-  assert.equal(finished, false); assert.equal(response.headers.get("Retry-After"), "2");
-  assert.equal((await response.json()).meta.refreshAfterMs, 2000);
+  assert.equal(finished, false); assert.equal(response.headers.get("Retry-After"), "1");
+  assert.equal((await response.json()).meta.refreshAfterMs, 1000);
   unblock(); await Promise.all(tasks);
   const ready = await app(new Request(url));
   assert.equal((await ready.json()).meta.pending, false); assert.equal(tasks.length, 1);
