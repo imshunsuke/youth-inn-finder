@@ -21,11 +21,11 @@ function snapshotUnavailable(status = "missing") {
 }
 
 function snapshot(row, now, maxAgeMs, validate) {
-  if (!row?.payload_json || !row.fetched_at) return { status: "missing", fetchedAt: row?.fetched_at ?? null, lastErrorCode: row?.last_error_code ?? null };
+  if (!row?.payload_json || !row.fetched_at) return { status: "missing", fetchedAt: row?.fetched_at ?? null, lastAttemptAt: row?.last_attempt_at ?? null, lastErrorCode: row?.last_error_code ?? null };
   let payload;
-  try { payload = JSON.parse(row.payload_json); } catch { return { status: "invalid", fetchedAt: row.fetched_at, lastErrorCode: "INVALID_SNAPSHOT" }; }
+  try { payload = JSON.parse(row.payload_json); } catch { return { status: "invalid", fetchedAt: row.fetched_at, lastAttemptAt: row.last_attempt_at, lastErrorCode: "INVALID_SNAPSHOT" }; }
   if (!validate(payload) || !Number.isFinite(Date.parse(row.fetched_at))) {
-    return { status: "invalid", fetchedAt: row.fetched_at, lastErrorCode: "INVALID_SNAPSHOT" };
+    return { status: "invalid", fetchedAt: row.fetched_at, lastAttemptAt: row.last_attempt_at, lastErrorCode: "INVALID_SNAPSHOT" };
   }
   const age = now - Date.parse(row.fetched_at);
   return { status: age < 0 || age >= maxAgeMs ? "stale" : "fresh", payload, fetchedAt: row.fetched_at,
@@ -63,9 +63,9 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
   // Collection needs membership/filter fields, not the much larger encoded official
   // detail URLs. Project inside D1 so those bytes never enter the collecting Worker.
   // Full catalog reads above remain unchanged for the public query adapter.
-  async function readCollectorCatalogRows() {
+  function collectorCatalogStatement(lease) {
     const valid = "CASE WHEN json_valid(c.payload_json) THEN CASE WHEN json_type(c.payload_json, '$.items')='array' THEN 1 ELSE 0 END ELSE 0 END";
-    const rows = await allRows(prepare(`SELECT c.house_type, c.fetched_at, c.last_attempt_at,
+    return prepare(`SELECT c.house_type, c.fetched_at, c.last_attempt_at,
       c.last_error_code, c.failure_count, c.next_attempt_at, ${valid} AS has_payload,
       (SELECT json_group_array(json_object(
         'id', json_extract(item.value, '$.id'), 'name', json_extract(item.value, '$.name'),
@@ -73,19 +73,49 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
         'street', json_extract(item.value, '$.street'),
         'isOnShelf', json(CASE json_extract(item.value, '$.isOnShelf') WHEN 1 THEN 'true' WHEN 0 THEN 'false' ELSE 'null' END)))
         FROM json_each(CASE WHEN ${valid}=1 THEN c.payload_json ELSE '{"items":[]}' END, '$.items') AS item) AS items_json
-      FROM query_catalogs c ORDER BY c.house_type`));
-    return rows.map(({ items_json, ...metadata }) => ({ ...metadata, items: JSON.parse(items_json || "[]") }));
+      FROM query_catalogs c WHERE ${guard(lease)} ORDER BY c.house_type`, guardedBindings(lease));
   }
+  const collectorCatalogs = (rows) => rows.map(({ items_json, ...metadata }) => ({ ...metadata, items: JSON.parse(items_json || "[]") }));
+  async function readCollectorCatalogRows() { return collectorCatalogs(await allRows(collectorCatalogStatement())); }
 
   // No calendar payload is needed to decide which station is due. Scope the single
   // metadata query to current membership and leave actual date data in D1.
-  async function readCollectorCalendarRows(stationIds) {
-    if (stationIds && stationIds.length === 0) return [];
+  function collectorCalendarStatement(stationIds, lease) {
     const valid = "CASE WHEN json_valid(payload_json) THEN CASE WHEN json_type(payload_json, '$.calendar')='object' THEN 1 ELSE 0 END ELSE 0 END";
-    return allRows(prepare(`SELECT station_id, fetched_at, last_attempt_at, last_error_code,
+    return prepare(`SELECT station_id, fetched_at, last_attempt_at, last_error_code,
       failure_count, next_attempt_at, ${valid} AS has_payload FROM query_calendars
-      ${stationIds ? "WHERE station_id IN (SELECT CAST(value AS TEXT) FROM json_each(?))" : ""}
-      ORDER BY station_id`, stationIds ? [json(stationIds)] : []));
+      WHERE ${stationIds ? "station_id IN (SELECT CAST(value AS TEXT) FROM json_each(?)) AND " : ""}${guard(lease)}
+      ORDER BY station_id`, [...(stationIds ? [json(stationIds)] : []), ...guardedBindings(lease)]);
+  }
+  async function readCollectorCalendarRows(stationIds) {
+    return stationIds?.length === 0 ? [] : allRows(collectorCalendarStatement(stationIds));
+  }
+
+  function collectorInputStatements(lease) {
+    return [collectorCatalogStatement(lease), collectorCalendarStatement(undefined, lease),
+      prepare(`SELECT id,conditions_json FROM reminders WHERE status='active' AND ${guard(lease)}
+        ORDER BY (id>COALESCE((SELECT reminder_cursor FROM query_collector_state WHERE name='official'),'')) DESC,id LIMIT 200`, guardedBindings(lease)),
+      prepare(`UPDATE interval_query_jobs SET priority=0,priority_until=0 WHERE priority=1
+        AND (priority_until<=? OR NOT EXISTS(SELECT 1 FROM reminders WHERE status='active')) AND ${guard(lease)}`,
+      [now(), ...guardedBindings(lease)]), dueIntervalStatement(30, lease),
+      prepare(`SELECT * FROM query_warm_ranges WHERE expires_at>? AND ${guard(lease)} LIMIT 1`, [now(), ...guardedBindings(lease)])];
+  }
+  function collectorInputs(result) {
+    return { catalogs: collectorCatalogs(result[0].results), calendars: result[1].results,
+      reminders: result[2].results, intervals: result[4].results, warmRange: result[5].results[0] ?? null };
+  }
+  async function readCollectorInputs(lease) {
+    // Independent planning reads share one D1 round trip. Calendar payloads and
+    // encoded official URLs stay out of the Worker. Newly listed IDs are simply
+    // missing in this metadata map and will be collected normally.
+    try {
+      return collectorInputs(await db.batch(collectorInputStatements(lease)));
+    } catch (error) {
+      if (!String(error.message).includes("no such table")) throw error;
+      const result = await db.batch([collectorCatalogStatement(lease), collectorCalendarStatement(undefined, lease)]);
+      await reconcileIntervalPriorities([], { lease, complete: true });
+      return { catalogs: collectorCatalogs(result[0].results), calendars: result[1].results, reminders: [], intervals: await allRows(dueIntervalStatement(30, lease)) };
+    }
   }
 
   async function readCalendars(stationIds, { maxAgeMs = DEFAULT_SNAPSHOT_FRESHNESS.calendarMaxAgeMs } = {}) {
@@ -127,7 +157,7 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
 
   // Bulk JSON inserts keep a 30-fetch collection comfortably below D1's per-invocation
   // query count. Every mutation is fenced by the current durable lease when supplied.
-  async function saveCalendarBatch(successes, failures = [], { lease } = {}) {
+  function calendarStatements(successes, failures = [], { lease } = {}) {
     const statements = [];
     if (successes.length) statements.push(prepare(`INSERT INTO query_calendars
       (station_id, payload_json, fetched_at, last_attempt_at, last_error_code, failure_count, next_attempt_at)
@@ -143,11 +173,14 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
       ON CONFLICT (station_id) DO UPDATE SET last_attempt_at=excluded.last_attempt_at, last_error_code=excluded.last_error_code,
       failure_count=query_calendars.failure_count+1, next_attempt_at=excluded.next_attempt_at`,
     [now(), json(failures), ...guardedBindings(lease)]));
-    if (statements.length) return db.batch(statements);
-    return [];
+    return statements;
+  }
+  async function saveCalendarBatch(successes, failures = [], options = {}) {
+    const statements = calendarStatements(successes, failures, options);
+    return statements.length ? db.batch(statements) : [];
   }
 
-  async function saveIntervalBatch(successes, failures = [], { lease, refreshMs = 15 * 60_000 } = {}) {
+  function intervalStatements(successes, failures = [], { lease, refreshMs = 15 * 60_000 } = {}) {
     const statements = [];
     const attemptAt = now();
     if (successes.length) statements.push(prepare(`INSERT INTO query_intervals
@@ -164,8 +197,8 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
       FROM json_each(?) WHERE ${guard(lease)}
       ON CONFLICT (station_id, start_date, end_date) DO UPDATE SET last_attempt_at=excluded.last_attempt_at, last_error_code=excluded.last_error_code`,
     [attemptAt, json(failures), ...guardedBindings(lease)]));
-    const updates = [...successes.map((item) => ({ ...item, nextAttemptAt: attemptAt + refreshMs, failureCount: 0, code: null })),
-      ...failures.map((item) => ({ ...item, failureCount: item.failureCount ?? 1 }))];
+    const updates = [...successes.map((item) => ({ ...item, nextAttemptAt: attemptAt + refreshMs, failureCount: 0, code: null, failed: false })),
+      ...failures.map((item) => ({ ...item, failureCount: item.failureCount ?? 1, failed: true }))];
     if (updates.length) statements.push(prepare(`UPDATE interval_query_jobs AS job SET
       next_attempt_at = (SELECT json_extract(value, '$.nextAttemptAt') FROM json_each(?) WHERE
         json_extract(value, '$.stationId')=job.station_id AND json_extract(value, '$.startDate')=job.start_date AND json_extract(value, '$.endDate')=job.end_date),
@@ -175,24 +208,60 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
         json_extract(value, '$.stationId')=job.station_id AND json_extract(value, '$.startDate')=job.start_date AND json_extract(value, '$.endDate')=job.end_date),
       updated_at = ? WHERE (station_id, start_date, end_date) IN
       (SELECT json_extract(value, '$.stationId'), json_extract(value, '$.startDate'), json_extract(value, '$.endDate') FROM json_each(?))
-      AND ${guard(lease)}`, [json(updates), json(updates), json(updates), attemptAt, json(updates), ...guardedBindings(lease)]));
+      AND ((priority=1 AND priority_until>?) OR EXISTS (SELECT 1 FROM json_each(?) WHERE
+        json_extract(value, '$.stationId')=job.station_id AND json_extract(value, '$.startDate')=job.start_date
+        AND json_extract(value, '$.endDate')=job.end_date AND json_extract(value, '$.failed')=1))
+      AND ${guard(lease)}`, [json(updates), json(updates), json(updates), attemptAt, json(updates), attemptAt, json(updates), ...guardedBindings(lease)]));
     // Public lookups are one-shot work. Keep the snapshot, but release their slots
     // in the same transaction; only live reminder jobs need periodic refreshes.
     if (successes.length) statements.push(prepare(`DELETE FROM interval_query_jobs
       WHERE (priority=0 OR priority_until<=?) AND (station_id, start_date, end_date) IN
         (SELECT json_extract(value, '$.stationId'), json_extract(value, '$.startDate'), json_extract(value, '$.endDate') FROM json_each(?))
       AND ${guard(lease)}`, [attemptAt, json(successes), ...guardedBindings(lease)]));
+    return statements;
+  }
+  async function saveIntervalBatch(successes, failures = [], options = {}) {
+    const statements = intervalStatements(successes, failures, options);
     return statements.length ? db.batch(statements) : [];
   }
 
-  async function acquireLease({ token = globalThis.crypto.randomUUID(), leaseMs = 180_000 } = {}) {
-    const at = now();
-    const row = await prepare(`INSERT INTO query_collector_state
+  async function finishCollection(lease, { calendars = [], intervals = [], cursors = {}, refreshMs = 15 * 60_000 } = {}) {
+    const statements = [...calendarStatements(calendars.filter((x) => x.ok), calendars.filter((x) => !x.ok), { lease }),
+      ...intervalStatements(intervals.filter((x) => x.ok), intervals.filter((x) => !x.ok), { lease, refreshMs })];
+    const cursorIndex = statements.length;
+    statements.push(prepare(`UPDATE query_collector_state SET calendar_cursor=COALESCE(?,calendar_cursor),
+      catalog_cursor=COALESCE(?,catalog_cursor),reminder_cursor=COALESCE(?,reminder_cursor),updated_at=?
+      WHERE name='official' AND lease_token=? AND lease_until>?`,
+    [cursors.calendarCursor ?? null, cursors.catalogCursor ?? null, cursors.reminderCursor ?? null, now(), ...fencedValues(lease)]),
+    prepare("UPDATE query_collector_state SET lease_token=NULL,lease_until=0,interactive_reserved=0 WHERE name='official' AND lease_token=?", [lease.token]));
+    const results = await db.batch(statements);
+    return changes(results[cursorIndex]) > 0;
+  }
+
+  function collectionLeaseStatement(token, at, leaseMs) {
+    return prepare(`INSERT INTO query_collector_state
       (name, lease_token, lease_until, updated_at) VALUES ('official', ?, ?, ?)
       ON CONFLICT (name) DO UPDATE SET lease_token=excluded.lease_token, lease_until=excluded.lease_until, updated_at=excluded.updated_at, collection_wait_until=0
-      WHERE query_collector_state.lease_until <= ? RETURNING *`, [token, at + leaseMs, at, at]).first();
+      WHERE query_collector_state.lease_until <= ? RETURNING *`, [token, at + leaseMs, at, at]);
+  }
+  function collectionLease(row, token) {
     return row ? { token, expiresAt: row.lease_until, calendarCursor: row.calendar_cursor,
       catalogCursor: row.catalog_cursor, reminderCursor: row.reminder_cursor } : null;
+  }
+  async function acquireLease({ token = globalThis.crypto.randomUUID(), leaseMs = 180_000 } = {}) {
+    return collectionLease(await collectionLeaseStatement(token, now(), leaseMs).first(), token);
+  }
+  async function acquireCollectionInputs({ token = globalThis.crypto.randomUUID(), leaseMs = 180_000 } = {}) {
+    const at = now(), candidate = { token, expiresAt: at + leaseMs };
+    try {
+      const result = await db.batch([collectionLeaseStatement(token, at, leaseMs), ...collectorInputStatements(candidate)]);
+      const lease = collectionLease(result[0].results[0], token);
+      return lease ? { lease, inputs: collectorInputs(result.slice(1)) } : null;
+    } catch (error) {
+      if (!String(error.message).includes("no such table")) throw error;
+      const lease = await acquireLease({ token, leaseMs });
+      return lease ? { lease, inputs: await readCollectorInputs(lease) } : null;
+    }
   }
 
   async function hasLease(lease) {
@@ -205,7 +274,7 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
 
   // The same fenced lease as Cron keeps total upstream concurrency bounded across
   // all visitors. Reserve quota atomically before fetching; failures also count.
-  async function acquireInteractiveLease({ budget = 9, cooldownMs = 10_000, dailyLimit = 6000, leaseMs = 60_000 } = {}) {
+  async function acquireInteractiveLease({ budget = 9, cooldownMs = 1000, dailyLimit = 6000, leaseMs = 60_000 } = {}) {
     const at = now(), day = Math.floor(at / 86_400_000), token = globalThis.crypto.randomUUID();
     const row = await prepare(`INSERT INTO query_collector_state
       (name,lease_token,lease_until,updated_at,interactive_started_at,interactive_day,interactive_requests,interactive_reserved)
@@ -240,20 +309,25 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
       WHERE name='official' AND lease_token=?`, [lease.interactiveDay ?? -1, refund, lease.token]).run()) > 0;
   }
 
-  async function dueIntervalJobs(limit = 30) {
+  function dueIntervalStatement(limit = 30, lease) {
     // Interleave ranges rather than draining one 90-station range first. Within
     // each priority, ranges least recently attempted get the next turn. This also
     // rotates fairly when there are more ranges than this slice has slots.
-    return allRows(prepare(`WITH due AS (
+    return prepare(`WITH due AS (
       SELECT *, CASE WHEN priority_until > ? THEN priority ELSE 0 END AS effective_priority
       FROM interval_query_jobs WHERE expires_at > ? AND next_attempt_at <= ?
     ), ranked AS (
       SELECT *, ROW_NUMBER() OVER (PARTITION BY effective_priority, start_date, end_date
         ORDER BY next_attempt_at, created_at, station_id) AS range_turn FROM due
-    ) SELECT * FROM ranked AS job ORDER BY effective_priority DESC, range_turn,
+    ) SELECT * FROM ranked AS job WHERE ${guard(lease)} ORDER BY effective_priority DESC, range_turn,
       COALESCE((SELECT MAX(sample.last_attempt_at) FROM query_intervals AS sample
         WHERE sample.start_date=job.start_date AND sample.end_date=job.end_date), 0),
-      next_attempt_at, created_at, station_id, start_date, end_date LIMIT ?`, [now(), now(), now(), limit]));
+      next_attempt_at, created_at, station_id, start_date, end_date LIMIT ?`, [now(), now(), now(), ...guardedBindings(lease), limit]);
+  }
+  async function dueIntervalJobs(limit = 30) { return allRows(dueIntervalStatement(limit)); }
+  async function nextIntervalAttemptAt() {
+    const row = await prepare("SELECT MIN(next_attempt_at) AS at FROM interval_query_jobs WHERE expires_at>?", [now()]).first();
+    return row?.at ?? null;
   }
 
   async function enqueueIntervalQuery(conditions, { ttlMs = 30 * 60_000, maxJobs = 300,
@@ -267,9 +341,16 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
       throw invalidInput("入住需在未来 90 天内，连续入住不超过 30 晚", "endDate");
     }
     if (!Number.isFinite(ttlMs) || ttlMs <= 0 || !Number.isInteger(maxJobs) || maxJobs < 1) throw new TypeError("Invalid interval queue configuration");
-    const catalog = await readCatalog(query.houseType, { maxAgeMs: catalogMaxAgeMs, compact: true });
-    if (catalog.status !== "fresh") throw snapshotUnavailable(catalog.status);
-    const candidates = [...new Set(filterListings(catalog.payload.items, query).map((item) => String(item.id)))];
+    let candidates;
+    if (observations) {
+      // Internal observations already come from the validated, filtered catalog
+      // in this request. Avoid fetching and parsing that same directory again.
+      candidates = [...new Set(observations.filter((item) => item.kind === "interval").map((item) => String(item.stationId)))];
+    } else {
+      const catalog = await readCatalog(query.houseType, { maxAgeMs: catalogMaxAgeMs, compact: true });
+      if (catalog.status !== "fresh") throw snapshotUnavailable(catalog.status);
+      candidates = [...new Set(filterListings(catalog.payload.items, query).map((item) => String(item.id)))];
+    }
     const snapshots = observations ? new Map(observations.filter((item) => item.kind === "interval").map((item) => [item.stationId, item]))
       : await readIntervals(candidates, dates.startDate, dates.endDate, { maxAgeMs: intervalMaxAgeMs });
     const ids = candidates.filter((id) => snapshots.get(id)?.status !== "fresh");
@@ -278,6 +359,17 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
     const expiresAt = Math.min(at + ttlMs, Date.parse(`${dates.startDate}T00:00:00+08:00`));
     if (expiresAt <= at) return { requested: ids.length, accepted: 0, capacityLimited: false };
     return enqueueIntervalJobs(ids.map((stationId) => ({ stationId, startDate: dates.startDate, endDate: dates.endDate, expiresAt })), { maxJobs, intervalMaxAgeMs, publicTtlMs: ttlMs });
+  }
+
+  async function rememberWarmRange(conditions) {
+    const query = parseCommonQuery(conditions), dates = validateStayDates(conditions.date, conditions.endDate);
+    const today = todayInShanghai(clock);
+    if (!dates.endDate || dates.startDate < today || dates.startDate > addDays(today, 90) || dates.endDate > addDays(dates.startDate, 30)) return;
+    const expiresAt = Math.min(now() + 30 * 60_000, Date.parse(`${dates.startDate}T00:00:00+08:00`));
+    await prepare(`INSERT INTO query_warm_ranges(name,start_date,end_date,house_type,only_on_shelf,expires_at)
+      VALUES('popular',?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET start_date=excluded.start_date,end_date=excluded.end_date,
+      house_type=excluded.house_type,only_on_shelf=excluded.only_on_shelf,expires_at=excluded.expires_at`,
+    [dates.startDate, dates.endDate, query.houseType, Number(query.onlyOnShelf), expiresAt]).run();
   }
 
   // Internal bulk admission for active reminder collection. Callers validate dates
@@ -326,7 +418,10 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
     // deadline forward. Only the currently queried tasks are renewed below.
     if (publicTtlMs !== undefined) statements.push(prepare(`UPDATE interval_query_jobs SET expires_at=?
       WHERE priority=0 AND expires_at>? AND ${guard(lease)}`, [at+publicTtlMs,at+publicTtlMs,...guardedBindings(lease)]));
-    const updateIndex = statements.length;
+    // Polling reads progress; renew an existing lease only near its deadline.
+    // This avoids rewriting every station (and its indexes) on each browser poll.
+    const renewalWindow = Math.min(120_000, (publicTtlMs ?? Math.min(...jobs.map((job) => job.expiresAt - at))) / 2);
+    const priorityRenewAt = at + Math.min(15 * 60_000, priorityTtlMs / 2);
     statements.push(
       prepare(`UPDATE interval_query_jobs AS job SET expires_at=MAX(expires_at,
         (SELECT json_extract(value, '$.expiresAt') FROM json_each(?) WHERE json_extract(value, '$.stationId')=job.station_id
@@ -337,8 +432,14 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
         updated_at=?
         WHERE (station_id, start_date, end_date) IN
           (SELECT json_extract(value, '$.stationId'), json_extract(value, '$.startDate'), json_extract(value, '$.endDate') FROM json_each(?))
+        AND ((?=1 AND (priority<>1 OR (priority_until<=? AND priority_until<
+          (SELECT json_extract(value, '$.priorityUntil') FROM json_each(?) WHERE json_extract(value, '$.stationId')=job.station_id
+            AND json_extract(value, '$.startDate')=job.start_date AND json_extract(value, '$.endDate')=job.end_date)))) OR (expires_at<=? AND expires_at<
+          (SELECT json_extract(value, '$.expiresAt') FROM json_each(?) WHERE json_extract(value, '$.stationId')=job.station_id
+            AND json_extract(value, '$.startDate')=job.start_date AND json_extract(value, '$.endDate')=job.end_date)))
         AND ${guard(lease)} ${priority === 0 ? `AND NOT ${freshJob}` : ""}`,
-      [payload, priority, priority, payload, at, payload, ...guardedBindings(lease), ...(priority === 0 ? freshBindings : [])]),
+      [payload, priority, priority, payload, at, payload, priority, priorityRenewAt, payload, at + renewalWindow, payload,
+        ...guardedBindings(lease), ...(priority === 0 ? freshBindings : [])]),
     );
     const evictionIndex = statements.length;
     if (priority === 1) statements.push(prepare(`DELETE FROM interval_query_jobs
@@ -353,7 +454,6 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
       ? "MAX(0, ? - (SELECT COUNT(*) FROM interval_query_jobs WHERE expires_at > ?))"
       : "MAX(0, MIN(? - (SELECT COUNT(*) FROM interval_query_jobs WHERE expires_at > ?), ? - (SELECT COUNT(*) FROM interval_query_jobs WHERE expires_at > ? AND priority=0)))";
     const capacityBindings = priority === 1 ? [maxJobs, at] : [maxJobs, at, maxJobs - reservedPriorityJobs, at];
-    const insertIndex = statements.length;
     statements.push(prepare(`INSERT INTO interval_query_jobs
       (station_id, start_date, end_date, expires_at, priority, priority_until, created_at, updated_at)
         SELECT json_extract(value, '$.stationId'), json_extract(value, '$.startDate'), json_extract(value, '$.endDate'),
@@ -366,9 +466,16 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
     // misreport the completed stations as rejected by the capacity limit.
     if (priority === 0) statements.push(prepare(`SELECT COUNT(*) AS requested FROM json_each(?) WHERE NOT ${freshIncoming}`,
       [payload, ...freshBindings]));
+    const requestedIndex = statements.length - 1;
+    // Accepted includes unchanged live jobs; changes() only counts actual writes.
+    statements.push(prepare(`SELECT COUNT(*) AS accepted FROM json_each(?) AS incoming WHERE EXISTS
+      (SELECT 1 FROM interval_query_jobs AS job WHERE job.station_id=json_extract(incoming.value,'$.stationId')
+        AND job.start_date=json_extract(incoming.value,'$.startDate') AND job.end_date=json_extract(incoming.value,'$.endDate')
+        AND job.expires_at>? ${priority === 1 ? "AND job.priority=1 AND job.priority_until>?" : `AND NOT ${freshJob}`})
+      AND ${guard(lease)}`, [payload, at, ...(priority === 1 ? [at] : freshBindings), ...guardedBindings(lease)]));
     const results = await db.batch(statements);
-    const accepted = changes(results[updateIndex]) + changes(results[insertIndex]);
-    const requested = priority === 0 ? results.at(-1).results[0].requested : jobs.length;
+    const accepted = results.at(-1).results[0].accepted;
+    const requested = priority === 0 ? results[requestedIndex].results[0].requested : jobs.length;
     const evicted = priority === 1 ? changes(results[evictionIndex]) : 0;
     return { requested, accepted, capacityLimited: accepted < requested, ...(evicted ? { evicted } : {}) };
   }
@@ -387,9 +494,9 @@ export function createSnapshotStore({ db, clock = () => new Date() } = {}) {
   }
 
   return Object.freeze({ readCatalog, readCatalogRows, readCalendarRows, readCollectorCatalogRows,
-    readCollectorCalendarRows, readCalendars, readIntervals,
-    saveCatalog, recordCatalogFailure, saveCalendarBatch, saveIntervalBatch, acquireLease, acquireInteractiveLease, requestCollectionTurn, hasLease,
-    advanceCursor, releaseLease, dueIntervalJobs, enqueueIntervalQuery, enqueueIntervalJobs, reconcileIntervalPriorities, pruneExpiredJobs });
+    readCollectorCalendarRows, readCollectorInputs, acquireCollectionInputs, readCalendars, readIntervals, finishCollection,
+    rememberWarmRange, saveCatalog, recordCatalogFailure, saveCalendarBatch, saveIntervalBatch, acquireLease, acquireInteractiveLease, requestCollectionTurn, hasLease,
+    advanceCursor, releaseLease, dueIntervalJobs, nextIntervalAttemptAt, enqueueIntervalQuery, enqueueIntervalJobs, reconcileIntervalPriorities, pruneExpiredJobs });
 }
 
 export function projectCollectorListings(items) {
@@ -404,12 +511,15 @@ export function projectCollectorListings(items) {
  * Missing/stale/invalid observations throw into queryService's unknown/partial path;
  * diagnostics retains their old timestamps without exposing expired counts as current.
  */
-export function createSnapshotClient({ db, store, clock = () => new Date(), compactCatalog = false, ...options } = {}) {
+export function createSnapshotClient({ db, store, clock = () => new Date(), compactCatalog = false, displayHistory = false, ...options } = {}) {
   store ??= createSnapshotStore({ db, clock });
   const freshness = { ...DEFAULT_SNAPSHOT_FRESHNESS, ...options };
   const catalogs = new Map();
   const stationIds = new Set();
   const observations = new Map();
+  const display = new Map();
+  let storageFailure;
+  const failRead = (error) => { storageFailure = error; throw error; };
   let calendars;
   const intervals = new Map();
   async function fetchListings({ houseType = "0" } = {}) {
@@ -423,18 +533,22 @@ export function createSnapshotClient({ db, store, clock = () => new Date(), comp
   function record(key, stationId, kind, entry) {
     observations.set(key, { stationId: String(stationId), kind, status: entry.status,
       fetchedAt: entry.fetchedAt, lastErrorCode: entry.lastErrorCode ?? null });
+    const age = clockDate(clock).getTime() - Date.parse(entry.fetchedAt);
+    if (displayHistory && entry.payload && age >= 0 && age < 60 * 60_000) display.set(String(stationId), {
+      stationId: String(stationId), snapshotStatus: entry.status, fetchedAt: entry.fetchedAt, ...entry.payload,
+    });
     if (entry.status !== "fresh") throw snapshotUnavailable(entry.status);
     return entry;
   }
   async function fetchCalendar(stationId) {
     stationIds.add(String(stationId));
-    calendars ??= store.readCalendars([...stationIds], { maxAgeMs: freshness.calendarMaxAgeMs });
+    calendars ??= store.readCalendars([...stationIds], { maxAgeMs: freshness.calendarMaxAgeMs }).catch(failRead);
     const previousBatch = calendars;
     const loaded = await previousBatch;
     // Other concurrent callers may already have replaced the old catalog batch.
     // Only its first waiter schedules a wider read; all others await that replacement.
     if (!loaded.has(String(stationId)) && calendars === previousBatch) {
-      calendars = store.readCalendars([...stationIds], { maxAgeMs: freshness.calendarMaxAgeMs });
+      calendars = store.readCalendars([...stationIds], { maxAgeMs: freshness.calendarMaxAgeMs }).catch(failRead);
     }
     const entry = record(`calendar:${stationId}`, stationId, "calendar", (await calendars).get(String(stationId)) ?? { status: "missing", fetchedAt: null });
     return { calendar: entry.payload.calendar, fetchedAt: entry.fetchedAt };
@@ -446,20 +560,23 @@ export function createSnapshotClient({ db, store, clock = () => new Date(), comp
     }
     const group = `${startDate}|${endDate}`;
     stationIds.add(String(stationId));
-    if (!intervals.has(group)) intervals.set(group, store.readIntervals([...stationIds], startDate, endDate, { maxAgeMs: freshness.intervalMaxAgeMs }));
+    if (!intervals.has(group)) intervals.set(group, store.readIntervals([...stationIds], startDate, endDate, { maxAgeMs: freshness.intervalMaxAgeMs }).catch(failRead));
     const previousBatch = intervals.get(group);
     const loaded = await previousBatch;
     if (!loaded.has(String(stationId)) && intervals.get(group) === previousBatch) {
-      intervals.set(group, store.readIntervals([...stationIds], startDate, endDate, { maxAgeMs: freshness.intervalMaxAgeMs }));
+      intervals.set(group, store.readIntervals([...stationIds], startDate, endDate, { maxAgeMs: freshness.intervalMaxAgeMs }).catch(failRead));
     }
     const entry = record(intervalKey(stationId, startDate, endDate), stationId, "interval",
       (await intervals.get(group)).get(String(stationId)) ?? { status: "missing", fetchedAt: null });
     return { ...entry.payload, fetchedAt: entry.fetchedAt };
   }
   async function diagnostics() {
+    // A failed bulk database read is a service failure, not a healthy empty
+    // observation set. The HTTP layer must retry it rather than cache it.
+    if (storageFailure) throw storageFailure;
     return { catalogs: await Promise.all([...catalogs].map(async ([houseType, promise]) => {
       const item = await promise; return { houseType, status: item.status, fetchedAt: item.fetchedAt, lastErrorCode: item.lastErrorCode ?? null };
-    })), observations: [...observations.values()], freshness };
+    })), observations: [...observations.values()], freshness, ...(displayHistory ? { display: [...display.values()] } : {}) };
   }
   return Object.freeze({ fetchListings, fetchCalendar, fetchDateAvailability, diagnostics });
 }

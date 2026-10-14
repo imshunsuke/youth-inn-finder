@@ -5,6 +5,16 @@ import { createSnapshotClient } from "./infrastructure/snapshot-store.mjs";
 import { runMonitor } from "./application/monitor.mjs";
 import { createReminderStore } from "./infrastructure/reminder-store.mjs";
 import { COLLECTION_CRON, COLLECTION_POLICY } from "./application/collection-policy.mjs";
+import { createQueryResponseCache } from "./infrastructure/query-response-cache.mjs";
+import { measureD1Usage } from "./infrastructure/d1-usage.mjs";
+
+const queryCaches = new WeakMap();
+async function withUsage(env, phase, work) {
+  if (!env.DB || env.D1_USAGE_METRICS === "false") return work(env);
+  const usage = measureD1Usage(env.DB);
+  try { return await work({ ...env, DB: usage.db }); }
+  finally { console.info(JSON.stringify({ event: "d1_usage", phase, ...usage.summary() })); }
+}
 
 export async function runScheduled(env, { clock = () => new Date(), fetchImpl = (...args) => globalThis.fetch(...args), phase = "all" } = {}) {
   if (!env.DB) return { disabled: true, reason: "storage-unavailable" };
@@ -33,12 +43,14 @@ export async function runScheduled(env, { clock = () => new Date(), fetchImpl = 
 
 export default {
   async fetch(request, env) {
-    const response = await createApp({ env, interactiveCollection: true })(request);
+    if (env.DB && !queryCaches.has(env.DB)) queryCaches.set(env.DB, createQueryResponseCache());
+    const response = await withUsage(env, "fetch", (measuredEnv) => createApp({ env: measuredEnv, interactiveCollection: true,
+      queryCache: env.DB ? queryCaches.get(env.DB) : undefined })(request));
     if (env.CF_VERSION_METADATA?.id) response.headers.set("X-Deployment-Id", env.CF_VERSION_METADATA.id);
     return response;
   },
   async scheduled(controller, env) {
     const phase = controller.cron === COLLECTION_CRON ? "collection" : controller.cron === "0 19 * * *" ? "cleanup" : "monitor";
-    return runScheduled(env, { phase });
+    return withUsage(env, phase, (measuredEnv) => runScheduled(measuredEnv, { phase }));
   },
 };

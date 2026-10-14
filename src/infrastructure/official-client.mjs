@@ -130,9 +130,11 @@ export function createOfficialClient({
           signal: controller.signal,
         });
         if (response.status >= 300 && response.status < 400) {
+          await response.body?.cancel();
           throw upstreamError("官网接口返回了非预期跳转", { code: "UPSTREAM_REDIRECT", retryable: false });
         }
         if (!response.ok) {
+          await response.body?.cancel();
           throw upstreamError("官网接口暂时不可用，请稍后重试", {
             code: response.status === 429 ? "UPSTREAM_RATE_LIMITED" : "UPSTREAM_HTTP_ERROR",
             retryable: response.status === 429 || response.status >= 500,

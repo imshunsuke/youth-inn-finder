@@ -1,3 +1,4 @@
+import { withCatalogBootstrap } from "./catalog-bootstrap.mjs";
 import { AppError } from "../domain/errors.mjs";
 import { handleQueryRequest } from "./query-routes.mjs";
 import { handleReminderRequest } from "./reminder-routes.mjs";
@@ -57,17 +58,16 @@ async function admitInterval(request, env, clock, scope = "interval") {
   const ip = request.headers.get("CF-Connecting-IP") || "local";
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${env.APP_SECRET}:${ip}`));
   const fingerprint = Array.from(new Uint8Array(bytes), (value) => value.toString(16).padStart(2, "0")).join("");
-  for (const [key, limit] of [[`${scope}:ip:${window}:${fingerprint}`, 300], [`${scope}:global:${window}`, 1800]]) {
-    const row = await env.DB.prepare(`INSERT INTO http_rate_limits (bucket_key,count,expires_at) VALUES (?,1,?)
+  const buckets = [[`${scope}:ip:${window}:${fingerprint}`, 300], [`${scope}:global:${window}`, 1800]];
+  const results = await env.DB.batch(buckets.map(([key]) => env.DB.prepare(`INSERT INTO http_rate_limits (bucket_key,count,expires_at) VALUES (?,1,?)
       ON CONFLICT(bucket_key) DO UPDATE SET count=http_rate_limits.count+1 RETURNING count`)
-      .bind(key, (window + 1) * 600_000).first();
-    if (row.count > limit) throw new AppError("查询较频繁，请稍后再试", { code: "RATE_LIMITED", status: 429 });
-  }
+      .bind(key, (window + 1) * 600_000)));
+  if (results.some((result, i) => result.results[0].count > buckets[i][1])) throw new AppError("查询较频繁，请稍后再试", { code: "RATE_LIMITED", status: 429 });
 }
 
 export function createApp({ env = {}, clock = () => new Date(),
   queryHandler = handleQueryRequest, reminderHandler = handleReminderRequest, assetHandler, onIntervalPending, interactiveCollection = false,
-  collectIntervals = collectInteractiveIntervals } = {}) {
+  collectIntervals = collectInteractiveIntervals, queryCache } = {}) {
   return async function handle(request) {
     const requestId = crypto.randomUUID();
     try {
@@ -96,21 +96,35 @@ export function createApp({ env = {}, clock = () => new Date(),
           if (!interactiveCollection) return secure(jsonResponse({ error: "按需补查暂不可用", code: "COLLECTION_UNAVAILABLE" }, 503), requestId);
           await admitInterval(request, env, clock, "collection");
           const result = await collectIntervals({ db: env.DB, clock, budget: 6 });
-          return secure(jsonResponse(result, 200, { "Retry-After": result.reason === "daily-budget" ? "60" : "10" }), requestId);
+          return secure(jsonResponse(result, 200, { "Retry-After": result.reason === "daily-budget" ? "60"
+            : result.status === "throttled" ? "2" : String(Math.ceil((result.retryAfterMs || 1000) / 1000)) }), requestId);
         }
         if (url.pathname === "/api/available" && request.method === "GET" && url.searchParams.has("endDate")) {
           await admitInterval(request, env, clock);
         }
+        const cached = queryCache?.get(request);
+        if (cached) return secure(cached, requestId);
         const options = { db: env.DB, env, clock, maxIntervalJobs: 300, intervalQueueTtlMs: 5 * 60_000, onIntervalPending, interactiveCollection };
         const response = await queryHandler(request, options) ?? await reminderHandler(request, options) ??
           jsonResponse({ error: "接口不存在", code: "NOT_FOUND" }, 404);
+        await queryCache?.put(request, response);
         return secure(response, requestId);
       }
       if (!["GET", "HEAD"].includes(request.method)) {
         return secure(jsonResponse({ error: "此页面只支持读取", code: "METHOD_NOT_ALLOWED" }, 405, { Allow: "GET, HEAD" }), requestId);
       }
       const assets = assetHandler ?? (env.ASSETS && ((input) => env.ASSETS.fetch(input)));
-      const response = assets ? await assets(request) : jsonResponse({ error: "页面不存在", code: "NOT_FOUND" }, 404);
+      let response;
+      if (assets && url.pathname === "/" && request.method === "GET" && env.DB) {
+        const catalogRequest = new Request(new URL("/api/catalog?houseType=0&includeOfficialDetails=false", url));
+        const catalogTask = (async () => {
+          const hit = queryCache?.get(catalogRequest); if (hit) return hit;
+          const result = await handleQueryRequest(catalogRequest, { db: env.DB, clock });
+          await queryCache?.put(catalogRequest, result); return result;
+        })().catch(() => null);
+        const [asset, catalog] = await Promise.all([assets(request), catalogTask]);
+        response = await withCatalogBootstrap(asset, catalog, new Date(clock()).getTime());
+      } else response = assets ? await assets(request) : jsonResponse({ error: "页面不存在", code: "NOT_FOUND" }, 404);
       return secure(response, requestId);
     } catch (error) {
       const known = error instanceof AppError;

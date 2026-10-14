@@ -3,11 +3,11 @@ import { nowIso, todayInShanghai } from "../domain/dates.mjs";
 import { createQueryService } from "../application/query-service.mjs";
 import { createSnapshotClient, createSnapshotStore, DEFAULT_SNAPSHOT_FRESHNESS } from "../infrastructure/snapshot-store.mjs";
 import { INTERACTIVE_REFRESH_MS } from "../application/interactive-collector.mjs";
-import { parseBoolean, parseCommonQuery } from "../domain/query.mjs";
+import { filterListings, parseBoolean, parseCommonQuery } from "../domain/query.mjs";
 
-const ROUTES = new Set(["/api/calendar", "/api/available", "/api/nearest", "/api/station"]);
+const ROUTES = new Set(["/api/catalog", "/api/calendar", "/api/available", "/api/nearest", "/api/station"]);
 const PARAMETERS = new Set(["startDate", "date", "endDate", "days", "lat", "lon", "houseType", "onlyOnShelf",
-  "district", "q", "keyword", "stationId", "houseId", "minCount", "limit", "sort", "includeDayItems", "includeOfficialDetails"]);
+  "district", "q", "keyword", "stationId", "houseId", "minCount", "limit", "sort", "includeDayItems", "includeOfficialDetails", "preview", "warm"]);
 
 function jsonResponse(body, status = 200, headers = {}) {
   return new Response(JSON.stringify(body), { status, headers: {
@@ -73,6 +73,20 @@ export async function handleQueryRequest(request, { db, clock = () => new Date()
     const input = queryParameters(url);
     const store = createSnapshotStore({ db, clock });
     const includeOfficialDetails = parseBoolean(input.includeOfficialDetails, "includeOfficialDetails", true);
+    const preview = parseBoolean(input.preview, "preview", false);
+    const warm = parseBoolean(input.warm, "warm", false);
+    if (url.pathname === "/api/catalog") {
+      const query = parseCommonQuery(input), at = new Date(clock()).getTime();
+      // Discovery is independent of date availability. An old directory is useful
+      // for browsing for at most one day, and never carries a date-specific count.
+      const catalog = await store.readCatalog(query.houseType, { compact: !includeOfficialDetails, maxAgeMs: 24 * 60 * 60_000 });
+      if (catalog.status !== "fresh") return jsonResponse({ error: "驿站目录正在准备，请稍后重试", code: "SNAPSHOT_PENDING" }, 503, { "Retry-After": "60" });
+      const fetched = Date.parse(catalog.fetchedAt), softEnd = fetched + 15 * 60_000;
+      const data = filterListings(catalog.payload.items, query).map(({ houseCount, availableCount, availabilityStatus, ...station }) => station);
+      return jsonResponse({ data, meta: { source: "persistent-catalog", fetchedAt: catalog.fetchedAt,
+        catalogStatus: at < softEnd ? "fresh" : "stale", availabilityStatus: "unconfirmed" } }, 200,
+      { "X-Snapshot-Valid-Until": String(Math.min(at + 60_000, at < softEnd ? softEnd : fetched + 24 * 60 * 60_000)) });
+    }
     if (url.pathname === "/api/station") {
       const query = parseCommonQuery(input);
       if (!query.stationId) throw invalidInput("请选择一个驿站", "stationId");
@@ -81,12 +95,20 @@ export async function handleQueryRequest(request, { db, clock = () => new Date()
       const station = catalog.payload.items[0];
       return station ? jsonResponse({ data: station, meta: { fetchedAt: catalog.fetchedAt } }) : jsonResponse({ error: "未找到这个驿站", code: "NOT_FOUND" }, 404);
     }
-    client = createSnapshotClient({ store, clock, ...freshness, compactCatalog: !includeOfficialDetails });
+    client = createSnapshotClient({ store, clock, ...freshness, compactCatalog: !includeOfficialDetails, displayHistory: preview });
     const service = createQueryService({ client, clock, minLeadDays });
     const result = url.pathname === "/api/calendar" ? await service.findCalendar(input)
       : url.pathname === "/api/nearest" ? await service.findNearest(input) : await service.findAvailable(input);
     const diagnostics = await client.diagnostics();
     addSnapshotMetadata(result, diagnostics);
+    if (preview && url.pathname === "/api/calendar") {
+      const history = new Map(diagnostics.display.filter((x) => x.snapshotStatus !== "fresh").map((x) => [x.stationId, x]));
+      result.stations = result.stations.map((station) => {
+        const old = history.get(station.id);
+        return old ? { ...station, historicalAvailability: old.calendar } : station;
+      });
+    }
+    if (preview && url.pathname === "/api/available") result.observations = diagnostics.display;
     if (url.pathname === "/api/available" && input.endDate && result.meta.pending && result.meta.availabilityStatus !== "not-open") {
       const queued = await store.enqueueIntervalQuery({ ...input, date: input.date ?? todayInShanghai(clock) }, {
         ttlMs: intervalQueueTtlMs, maxJobs: maxIntervalJobs,
@@ -97,11 +119,20 @@ export async function handleQueryRequest(request, { db, clock = () => new Date()
       result.meta.collection = { status: queued.capacityLimited ? "capacity-limited" : queued.accepted > 0 ? "queued" : "ready", ...queued };
       if (queued.accepted > 0 && (onIntervalPending || interactiveCollection)) {
         onIntervalPending?.();
-        result.meta.refreshAfterMs = INTERACTIVE_REFRESH_MS;
+        result.meta.refreshAfterMs = result.meta.snapshotCoverage.freshStations === 0 ? 1000 : INTERACTIVE_REFRESH_MS;
         if (interactiveCollection) result.meta.collection.advanceUrl = "/api/collection";
       }
     }
-    return jsonResponse(result, 200, result.meta.pending ? { "Retry-After": String(result.meta.refreshAfterMs / 1000) } : {});
+    if (warm && preview && url.pathname === "/api/available" && input.endDate) await store.rememberWarmRange({ ...input, date: input.date ?? todayInShanghai(clock) });
+    // Cache only settled observations. A short response cache must expire no
+    // later than either the catalog or the oldest underlying station sample.
+    const at = new Date(clock()).getTime();
+    const validUntil = Math.min(at + 60_000,
+      ...diagnostics.catalogs.map((x) => Date.parse(x.fetchedAt) + diagnostics.freshness.catalogMaxAgeMs),
+      ...diagnostics.observations.filter((x) => x.status === "fresh").map((x) => Date.parse(x.fetchedAt) +
+        (x.kind === "interval" ? diagnostics.freshness.intervalMaxAgeMs : diagnostics.freshness.calendarMaxAgeMs)));
+    return jsonResponse(result, 200, result.meta.pending ? { "Retry-After": String(result.meta.refreshAfterMs / 1000) }
+      : Number.isFinite(validUntil) && validUntil > at ? { "X-Snapshot-Valid-Until": String(validUntil) } : {});
   } catch (error) {
     const known = error instanceof AppError;
     const status = known ? error.status : 500;

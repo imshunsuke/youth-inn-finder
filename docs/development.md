@@ -18,6 +18,8 @@ npm start
 
 ## 开发与验证
 
+日常启动直接使用仓库中的浏览器脚本产物，仍不需要第三方运行时包。修改 `public/app.js` 或 `public/lib/` 后，先运行 `npm ci` 安装锁定的开发工具，再运行 `npm run build` 更新 `public/app.bundle.js`。构建使用官方 Wrangler 已带的 esbuild，不新增浏览器依赖。`npm run check` 会拒绝与源码不一致的产物。
+
 ```bash
 npm run dev       # 代码变更时重启本地服务
 npm run check     # JavaScript 语法、页面 ID 和应用入口检查

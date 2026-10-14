@@ -7,6 +7,7 @@
 | 接口 | 用途与返回 |
 | --- | --- |
 | `GET /api/health` | 版本、时间、邮件配置与邀请模式；也支持 `HEAD` |
+| `GET /api/catalog` | 轻量驿站目录，返回 `{ data, meta }`；没有所选日期的余房数 |
 | `GET /api/calendar` | 日历聚合、各站日期可用性，返回 `{ startDate, days, stations, meta }` |
 | `GET /api/available` | 单日或真实连续入住的已知可用房源，返回 `{ data, meta }` |
 | `GET /api/station` | 按 `stationId` 和可选 `houseType` 读取单站完整详情 |
@@ -37,6 +38,8 @@
 | `startDate` / `days` | `calendar` 使用；起始日默认上海今天，天数默认 `21`，整数 `1–31`；起始日兼容 `date` |
 | `includeOfficialDetails` | 默认 `true`；`false` 省略列表中较大的 `officialUrl`，可通过 `GET /api/station?stationId=…` 按需获取 |
 | `includeDayItems` | `calendar` 默认 `true`；`false` 省略重复的 `days[].items`，站点、聚合和未知状态不变 |
+| `preview` | 默认 `false`；网页设为 `true`，将一小时内的历史样本放在独立展示字段；严格余房 `data` 和提醒语义不变 |
+| `warm` | 默认 `false`；配合 `preview=true` 的连续入住查询登记一个近期区间，最多保留 30 分钟，只用后台空闲预算预热；轮询不续期 |
 | `date` / `endDate` | `available` 使用；入住日默认上海今天，可选离店日，格式均为 `YYYY-MM-DD`；离店必须晚于入住 |
 
 未知参数或重复的同名参数返回 `400 INVALID_INPUT`。整数参数不接受小数或科学计数法。`sort=availability` 按已知余房数降序，`distance` 按直线公里数升序。
@@ -72,9 +75,19 @@
 - `coverage`：执行站点观测时，`successfulStations + failedStations = totalStations`；`unknownStations` 与失败有交集，不能再次相加作分母。未开放日期另有 `notOpenStations`。
 - `snapshotCoverage`：快照层面的新鲜、缺失、过期和无效数量；`lastFailedStations` 是另外的历史失败指标，也不能重复加入分母。
 
-HTTP 响应读取持久快照，不等待全市逐站查询。缺少目录时返回 `503 SNAPSHOT_PENDING`，过期目录返回 `503 SNAPSHOT_STALE`；缺少部分站点快照时可返回 `200` 和部分结果。缺少连续入住快照时会有限入队，`meta.collection` 说明是否已排队或容量受限。线上返回固定的 `meta.collection.advanceUrl`。客户端用无请求体的 `POST /api/collection` 启动一次最多 6 个驿站的独立补查，再读查询结果；不会在一次调用里同时解析全市目录和采集。按 `Retry-After` 或 `meta.refreshAfterMs` 等待，按需补查时为 10 秒，目录准备等情况为 60 秒。不保证立即完成；默认快照满 20 分钟后视为过期。
+HTTP 响应读取持久快照，不等待全市逐站查询。缺少目录时返回 `503 SNAPSHOT_PENDING`，过期目录返回 `503 SNAPSHOT_STALE`；缺少部分站点快照时可返回 `200` 和部分结果。缺少连续入住快照时会有限入队，`meta.collection` 说明是否已排队或容量受限。线上返回固定的 `meta.collection.advanceUrl`。客户端用无请求体的 `POST /api/collection` 启动一次最多 6 个驿站的独立补查，再读查询结果；不会在一次调用里同时解析全市目录和采集。查询进度首分钟每 2 秒读取，补查按共享的一秒启动间隔连续推进；一分钟后仍未完成则退回每 10 秒重试。以 `Retry-After` 为准等待失败、限额或下一次到期任务，目录准备等情况为 60 秒。默认快照满 20 分钟后视为过期。已完成的公开查询可命中 Worker 内存响应缓存，最多保存一分钟，且不能越过最早样本或目录的有效期；`X-Query-Cache: HIT` 标记命中，限流仍然执行。
 
 区间查询只为缺失、过期或无效快照的站点入队，成功的普通查询任务释放名额并保留快照；提醒任务仍定期刷新。`collection.requested` 是本次仍需更新的站点数，`accepted` 包括新入队和已有的待处理任务。`status=capacity-limited` 表示其中有站点未能入队，即使 `accepted` 大于 0；`queued` 表示待更新站点全部已排队。HTTP `200` 和 `pending=true` 只表示返回了部分结果，不能据此断言后台正在执行该查询。页面展示 `snapshotCoverage.freshStations/totalStations` 的快照更新进度；失败、排队和未入队分别提示，参数错误不会自动无限重试。
+
+## 快速展示与确认
+
+网页先读取轻量目录，筛选和换日期直接展示真实驿站卡片，候选卡片不带可用房数。区间 API 只把所选入住、离店组合的有效观测视为已确认，不从逐日余房推算连续入住。`preview=true` 时，区间 `observations` 保留明确零值、快照状态和原采样时间，前端可准确移除已确认无房的站点。日历历史数据放在 `stations[].historicalAvailability`，不加入当日已知房数。
+
+首页 GET 可携带同一份精简公开目录，放在不可执行的 `template` 中，保留原采样时间并转义 HTML。该目录不包含余房、邮箱或令牌；首页不缓存这一嵌入版本。后端目录读取仍可复用最多一分钟的公开响应缓存。
+
+余房样本未满 20 分钟可确认；满 20 分钟至一小时只展示“上次记录 · 待确认”；满一小时不显示历史计数。失败不会延长原采样时间。目录只供浏览，超过 15 分钟提示待更新，满一天停止使用。浏览器本地只持久保存精简目录，不保存日期余房、邮箱、邀请码或管理令牌。
+
+全站只记一个最近主动查询的区间，访客轮询不续期。Cron 先处理目录、日历和已有查询及提醒任务，再用本次固定预算中未用的名额预热该区间，每次最多三站。预热与其他采集共用持久租约和原有六次请求上限，不增加付费服务；它不保证任何区间始终全量新鲜。
 
 ## 提醒授权与条件
 
