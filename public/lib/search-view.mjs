@@ -63,3 +63,10 @@ export function writeCatalogCache(key, payload, storage = globalThis.localStorag
     records[key] = data; storage.setItem(CATALOG_STORAGE_KEY, JSON.stringify(records)); return true;
   } catch { return false; }
 }
+
+export function readBootstrapCatalog(document = globalThis.document, now = Date.now()) {
+  try {
+    const node = document.querySelector('#bootstrap-catalog');
+    return sanitizeCatalog(JSON.parse(node?.content?.textContent || node?.textContent || 'null'), now);
+  } catch { return null; }
+}

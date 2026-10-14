@@ -5,11 +5,12 @@ import { intervalFeedback, intervalRetry } from "./lib/interval-status.mjs";
 import { createCollectionPump } from "./lib/collection-pump.mjs";
 import { freshSample, favoriteForQuery } from "./lib/listing-state.mjs";
 
-import { searchView, readCatalogCache, writeCatalogCache } from "./lib/search-view.mjs";
+import { searchView, readBootstrapCatalog, readCatalogCache, writeCatalogCache } from "./lib/search-view.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const today = todayInShanghai();
-const state = { date: addDays(today, 2), endDate: null, district: "", q: "", houseType: "0", onlyOnShelf: true, minCount: 1, limit: 20, sort: "availability", coordinates: null, nearestDistances: new Map(), tab: "find", favorites: readFavorites(), calendar: null, calendarKey: "", calendarLoading: false, calendarError: "", catalog: readCatalogCache("0"), catalogKey: "0", catalogError: "", interval: null };
+const bootstrapCatalog = readBootstrapCatalog();
+const state = { date: addDays(today, 2), endDate: null, district: "", q: "", houseType: "0", onlyOnShelf: true, minCount: 1, limit: 20, sort: "availability", coordinates: null, nearestDistances: new Map(), tab: "find", favorites: readFavorites(), calendar: null, calendarKey: "", calendarLoading: false, calendarError: "", catalog: bootstrapCatalog || readCatalogCache("0"), catalogKey: "0", catalogError: "", interval: null };
 const calendarCache = new Map(), intervalCache = new Map();
 const collectionPump = createCollectionPump();
 let stationDetailSequence = 0, collectionNotice = "";
@@ -142,7 +143,7 @@ function renderResults() {
   const pieces = [];
   if (source.loading) pieces.push("正在更新");
   else if (source.meta?.pending && source.status !== "pending") pieces.push("仍在更新");
-  if (source.error) pieces.push(`${source.error}${items.length ? "，保留上次结果" : ""}`);
+  if (source.error) pieces.push(`${source.error}${items.length ? source.confirmed ? "，保留有效记录" : "，仍可浏览驿站，余房待确认" : ""}`);
   else if (source.stale) pieces.push("上次房源结果已过期，等待更新");
   else if (source.status === "pending") pieces.push(intervalFeedback(source.meta).summary);
   else if (partial && source.meta) pieces.push(source.total > 0 ? `已确认 ${source.confirmed}/${source.total} 个驿站，其余待确认` : "部分数据待确认");
@@ -319,4 +320,4 @@ function scheduleAutoUpdate() {
 document.addEventListener("visibilitychange", () => { if (!document.hidden) autoUpdate(); scheduleAutoUpdate(); });
 window.addEventListener("pagehide", () => clearTimeout(autoUpdateTimer));
 window.addEventListener("pageshow", () => { autoUpdate(); scheduleAutoUpdate(); });
-hydrateIcons(); render(); loadCatalog(); loadCalendar(); reminders.initialize(); scheduleAutoUpdate();
+hydrateIcons(); render(); if (!bootstrapCatalog) loadCatalog(); loadCalendar(); reminders.initialize(); scheduleAutoUpdate();

@@ -1,3 +1,4 @@
+import { withCatalogBootstrap } from "./catalog-bootstrap.mjs";
 import { AppError } from "../domain/errors.mjs";
 import { handleQueryRequest } from "./query-routes.mjs";
 import { handleReminderRequest } from "./reminder-routes.mjs";
@@ -113,7 +114,17 @@ export function createApp({ env = {}, clock = () => new Date(),
         return secure(jsonResponse({ error: "此页面只支持读取", code: "METHOD_NOT_ALLOWED" }, 405, { Allow: "GET, HEAD" }), requestId);
       }
       const assets = assetHandler ?? (env.ASSETS && ((input) => env.ASSETS.fetch(input)));
-      const response = assets ? await assets(request) : jsonResponse({ error: "页面不存在", code: "NOT_FOUND" }, 404);
+      let response;
+      if (assets && url.pathname === "/" && request.method === "GET" && env.DB) {
+        const catalogRequest = new Request(new URL("/api/catalog?houseType=0&includeOfficialDetails=false", url));
+        const catalogTask = (async () => {
+          const hit = queryCache?.get(catalogRequest); if (hit) return hit;
+          const result = await handleQueryRequest(catalogRequest, { db: env.DB, clock });
+          await queryCache?.put(catalogRequest, result); return result;
+        })().catch(() => null);
+        const [asset, catalog] = await Promise.all([assets(request), catalogTask]);
+        response = await withCatalogBootstrap(asset, catalog, new Date(clock()).getTime());
+      } else response = assets ? await assets(request) : jsonResponse({ error: "页面不存在", code: "NOT_FOUND" }, 404);
       return secure(response, requestId);
     } catch (error) {
       const known = error instanceof AppError;
